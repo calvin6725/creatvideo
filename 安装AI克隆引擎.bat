@@ -43,6 +43,7 @@ if errorlevel 1 (
   echo   - 网络无法访问 download.pytorch.org：可加参数 --cpu 先装 CPU 版
   echo   - 网络无法访问 huggingface.co：可加参数 --mirror 用镜像下载模型
   echo   例如：python tools\setup_ai.py --mirror
+  echo   - 只是模型没下完：python tools\setup_ai.py --skip-torch --mirror
   pause
   exit /b 1
 )

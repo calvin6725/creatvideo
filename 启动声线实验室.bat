@@ -3,6 +3,8 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 set "PORT=8000"
+rem 文件里是 UTF-8 内容，这里明确用 UTF-8 代码页，避免 PowerShell 参数里的中文变乱码
+chcp 65001 >nul
 
 rem 找一个正在监听 8000 的进程；没有就启动本机服务
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%PORT% .*LISTENING"') do set "PIDFOUND=%%a"

@@ -3,6 +3,7 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 set "PORT=8000"
+chcp 65001 >nul
 
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%PORT% .*LISTENING"') do set "PIDFOUND=%%a"
 if not defined PIDFOUND (
