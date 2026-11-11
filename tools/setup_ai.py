@@ -83,6 +83,9 @@ def install_torch(python: Path, force_cpu: bool) -> bool:
             print("✓ 已安装支持 CUDA 的 PyTorch")
             return True
         print("! CUDA 版没装上或检测不到显卡，改用 CPU 版 PyTorch（合成会慢一些）")
+        print("  提示：如果下载中断，可先执行")
+        print("  pip install torch torchaudio -i https://pypi.tuna.tsinghua.edu.cn/simple")
+        print("  再运行：python tools/setup_ai.py --skip-torch")
 
     log("安装 CPU 版 PyTorch")
     run([
@@ -120,16 +123,71 @@ def install_all(python: Path | None = None, mirror: bool = False, cpu: bool = Fa
 
 
 # 推理必需的包（装不上就是装不上，要提示用户）
-AI_CORE = ["vocos", "safetensors", "huggingface_hub", "lhotse", "jieba", "pypinyin", "cn2an", "inflect"]
-# 可选增强：语音识别 / 更准确的音素化
-AI_OPTIONAL = [("faster-whisper", "参考音频自动识别文字"), ("piper_phonemize", "更准确的音素化")]
+AI_CORE = [
+    "vocos", "safetensors", "huggingface_hub", "lhotse", "jieba",
+    "pypinyin", "cn2an", "inflect", "urllib3",
+]
+# 可选增强：语音识别（不装可以手填参考文字）
+AI_OPTIONAL = [("faster-whisper", "参考音频自动识别文字")]
+PIPER_WHEEL = (
+    "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/"
+    "piper_phonemize-1.5.9-{tag}-{platform}.whl"
+)
 
 
-def _pip(python: Path, args: list[str], extra_index: list[str] | None = None) -> int:
-    cmd = [str(python), "-m", "pip", "install", *args, "--disable-pip-version-check"]
+MIRROR_INDEXES = [
+    "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "https://mirrors.aliyun.com/pypi/simple",
+]
+
+
+def _pip(python: Path, args: list[str], extra_index: list[str] | None = None, attempts: int = 2) -> int:
+    """pip 安装，失败自动重试，最后再试国内镜像（官方源偶发 TLS 断流时很有效）。"""
+    base = [str(python), "-m", "pip", "install", *args,
+            "--disable-pip-version-check", "--retries", "5", "--timeout", "60"]
     if extra_index:
-        cmd += ["-f", *extra_index]
-    return run(cmd, check=False).returncode
+        base += ["-f", *extra_index]
+    for attempt in range(attempts):
+        if run(base, check=False).returncode == 0:
+            return 0
+        print(f"! 第 {attempt + 1} 次安装失败，重试中…")
+    for index in MIRROR_INDEXES:
+        print(f"! 改用镜像源重试：{index}")
+        if run([*base, "-i", index], check=False).returncode == 0:
+            return 0
+    return 1
+
+
+def install_piper(python: Path) -> None:
+    """安装音素化库 piper_phonemize（ZipVoice 的分词器依赖它，属于必需项）。
+
+    优先：k2-fsa 的 wheel 源（PyPI 上的 1.1.0 对中文 eSpeak 语音不可用）；
+    失败则退回 PyPI 版本，由引擎侧决定能否使用。
+    """
+    probe = run([str(python), "-c", "import piper_phonemize"], capture_output=True, text=True)
+    if probe.returncode == 0:
+        print("✓ piper_phonemize 已安装")
+        return
+    log("安装音素化库 piper_phonemize（中文拼音/音素需要）")
+    code = _pip(python, ["piper_phonemize"], ["https://k2-fsa.github.io/icefall/piper_phonemize.html"])
+    if code != 0:
+        print("! k2-fsa 轮子源不可用，尝试直连 GitHub Release / PyPI")
+        import platform
+        import sys as _sys
+
+        tag = f"cp{_sys.version_info.major}{_sys.version_info.minor}"
+        if platform.system() == "Windows":
+            plat = "win_amd64"
+        elif platform.system() == "Darwin":
+            plat = "macosx_11_0_arm64" if platform.machine() in ("arm64", "aarch64") else "macosx_10_15_x86_64"
+        else:
+            plat = "manylinux2014_x86_64.manylinux_2_17_x86_64"
+        wheel = PIPER_WHEEL.format(tag=tag, platform=plat)
+        code = _pip(python, [wheel])
+        if code != 0:
+            print("! piper_phonemize 安装失败：AI 克隆可能无法合成（需要它做音素化）")
+            print("  可手动下载安装：")
+            print(f"  {wheel}")
 
 
 def install_ai_deps(python: Path, mirror: bool = False) -> None:
@@ -137,12 +195,7 @@ def install_ai_deps(python: Path, mirror: bool = False) -> None:
     code = _pip(python, AI_CORE)
     if code != 0:
         print("! 核心依赖安装失败，请检查网络后重新运行本脚本")
-    # piper_phonemize 需要 k2-fsa 的轮子源；国内网络可能访问不了，失败不算致命
-    run([
-        str(python), "-m", "pip", "install", "piper_phonemize",
-        "-f", "https://k2-fsa.github.io/icefall/piper_phonemize.html",
-        "--disable-pip-version-check",
-    ], check=False)
+    install_piper(python)
     for package, purpose in AI_OPTIONAL:
         probe = run([str(python), "-c", f"import {package.replace('-', '_')}"], capture_output=True, text=True)
         if probe.returncode == 0:
@@ -176,10 +229,22 @@ def download_models(use_mirror: bool) -> None:
     target = MODELS / MODEL_NAME
     target.mkdir(parents=True, exist_ok=True)
     log(f"下载 ZipVoice-Distill 模型到 {target}（约 500 MB，只需一次）")
-    for name in ("model.pt", "model.json", "tokens.txt"):
-        path = hf_hub_download(HF_REPO, filename=f"{MODEL_NAME}/{name}")
-        shutil.copy2(path, target / name)
-        print(f"  ✓ {name}")
+    try:
+        for name in ("model.pt", "model.json", "tokens.txt"):
+            path = hf_hub_download(HF_REPO, filename=f"{MODEL_NAME}/{name}")
+            shutil.copy2(path, target / name)
+            print(f"  ✓ {name}")
+    except Exception as exc:
+        raise SystemExit(
+            "模型下载失败：\n"
+            f"  {exc}\n\n"
+            "可以这样补救（任选其一）：\n"
+            "  1) 加镜像参数重跑：python tools/setup_ai.py --skip-torch --mirror\n"
+            "  2) 手动下载下面 3 个文件，放到 " + str(target) + "\n"
+            f"     https://huggingface.co/{HF_REPO}/tree/main/{MODEL_NAME}\n"
+            "     （model.pt、model.json、tokens.txt）\n"
+            "  3) 用浏览器打开项目页，点“一键安装”并勾选“国内网络”"
+        )
     vocos = MODELS / MODEL_NAME / "vocos"
     vocos.mkdir(exist_ok=True)
     log("下载声码器 vocos-mel-24khz（约 50 MB）")

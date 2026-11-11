@@ -200,11 +200,10 @@ def test_missing_dependencies_are_reported(monkeypatch, tmp_path):
 
     cfg = config.Config()
     engine = engines.ZipVoiceEngine(cfg)
-    status = engine.probe()
-    if status.available:
-        pytest.skip("当前环境已经装好 AI 依赖")
-    assert "安装" in status.detail
     missing = engine.missing_dependencies()
-    assert isinstance(missing, list)
-    if missing:
-        assert all(label in status.detail for label in missing[:1])
+    if not missing:
+        pytest.skip("当前环境 AI 依赖齐全（是否可用取决于有没有下载模型）")
+    status = engine.probe()
+    assert not status.available
+    assert "安装" in status.detail
+    assert missing[0] in status.detail
