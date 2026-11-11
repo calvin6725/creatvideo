@@ -232,28 +232,6 @@ $('originalToggle').addEventListener('click', () => {
 $('musicToggle').addEventListener('click', () => toggle($('musicToggle'), '启用', '关闭'));
 $('voiceToggle').addEventListener('click', () => toggle($('voiceToggle'), '启用', '关闭'));
 
-function voiceSettingsRecord() {
-  const fallback = {
-    pitch: 0,
-    brightness: 0,
-    warmth: 0,
-    presence: 0,
-    room: 0,
-    drive: 0,
-    resonance: 0,
-    nasality: 0,
-    breath: 0,
-    vibrato: 0,
-    speed: 0
-  };
-  try {
-    const saved = JSON.parse(localStorage.getItem('voiceLabSettings') || '{}');
-    return { name: saved.name || 'custom', values: { ...fallback, ...(saved.values || {}) } };
-  } catch (error) {
-    return { name: 'custom', values: fallback };
-  }
-}
-
 $('recordVoice').addEventListener('click', async () => {
   if (S.recording) {
     S.recorder.stop();
@@ -287,10 +265,6 @@ $('recordVoice').addEventListener('click', async () => {
 function updateTtsButton() {
   const hasText = $('ttsText').value.trim().length > 0;
   $('generateVoice').disabled = !S.clones.length || !hasText || S.generatingVoice;
-}
-
-function clamp(value, min = -100, max = 100) {
-  return Math.max(min, Math.min(max, value));
 }
 
 /** 从声线实验室同步过来的默认参数（兼容旧格式） */

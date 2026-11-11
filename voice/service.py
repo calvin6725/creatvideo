@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import mimetypes
@@ -25,14 +24,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import numpy as np
-
 from . import asr
 from .audio_io import read_audio_bytes, resample, rms, to_mono, wav_bytes
 from .config import APP_DIR, DATA_DIR, JOB_DIR, load_config
 from .engines import EngineError, EngineManager
-from .processor import analyze_clone, LegacySettings
-from .segment import analyze_reference, best_reference_segment, split_text_for_tts
+from .processor import analyze_clone
+from .segment import analyze_reference, best_reference_segment
 from .store import CloneStore
 
 log = logging.getLogger("voice.service")
@@ -303,7 +300,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        query = urllib.parse.parse_qs(parsed.query)
         try:
             if path == "/api/status":
                 self._json(200, self._status())
@@ -345,7 +341,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"available": bool(ENGINE.fallback.voices()), "voices": ENGINE.fallback.voices()})
                 return
             if path == "/api/stt":
-                text = query.get("token", [""])[0]
                 self._json(200, {"available": asr.available()[0], "detail": asr.available()[1]})
                 return
             if path.startswith("/api/"):
@@ -425,6 +420,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._json(200, job)
                 return
+            if path == "/api/release":
+                self._json(200, {"ok": True, **ENGINE.ai.release()})
+                return
             if path == "/api/warmup":
                 try:
                     ENGINE.ai.load()
@@ -443,8 +441,13 @@ class Handler(BaseHTTPRequestHandler):
             self._error(500, str(exc))
 
     # ------------------------------------------------------------- 静态文件
+    BLOCKED_PREFIXES = ("data", "models", "third_party", "voice", "tools", "tests", ".venv", ".git")
+
     def _static(self, path: str) -> None:
         relative = urllib.parse.unquote(path.lstrip("/")) or "index.html"
+        first = relative.split("/")[0]
+        if first in self.BLOCKED_PREFIXES or first.startswith(".") or ".." in relative:
+            raise HttpError(404, "文件不存在")
         target = (APP_DIR / relative).resolve()
         if APP_DIR.resolve() not in target.parents and target != APP_DIR.resolve():
             raise HttpError(403, "禁止访问")

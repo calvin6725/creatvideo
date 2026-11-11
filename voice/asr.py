@@ -11,11 +11,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Optional
-
 import numpy as np
 
-from .audio_io import resample, to_mono, wav_bytes
+from .audio_io import resample, to_mono
 
 log = logging.getLogger("voice.asr")
 
@@ -24,18 +22,13 @@ _CACHE: dict = {}
 
 
 def available() -> tuple[bool, str]:
-    try:
-        import faster_whisper  # noqa: F401
+    from importlib.util import find_spec
 
+    if find_spec("faster_whisper") is not None:
         return True, "faster-whisper（CTranslate2，CPU/GPU 均可）"
-    except Exception:
-        pass
-    try:
-        import whisper  # noqa: F401
-
+    if find_spec("whisper") is not None:
         return True, "openai-whisper"
-    except Exception:
-        return False, "未安装转写模型，可执行 pip install faster-whisper，或手动填写参考文字"
+    return False, "未安装转写模型，可执行 pip install faster-whisper，或手动填写参考文字"
 
 
 def transcribe(samples: np.ndarray, rate: int, language: str = "zh", model_size: str = "small") -> str:

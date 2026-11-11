@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 
@@ -167,3 +166,29 @@ def test_service_status_without_models(monkeypatch, tmp_path):
     if status["engine"] == "none":
         with pytest.raises(engines.EngineError):
             manager.active()
+
+
+def test_split_for_budget_respects_prompt_cost():
+    """参考音越长，单句允许的字数越少（4GB 显存的关键约束）。"""
+    from voice.engines import split_for_budget
+
+    sentence = "这是一句比较长的解说词，需要按预算切成更小的片段，避免一次生成太长导致显存不足。"
+    wide = split_for_budget(sentence, prompt_seconds=3.0, limit=12.0)
+    narrow = split_for_budget(sentence, prompt_seconds=3.0, limit=5.0)
+    assert len(narrow) >= len(wide) >= 1
+    assert all(piece for piece in narrow)
+    assert "".join(narrow).replace("，", "") != "" and len("".join(narrow)) >= len(sentence) - 2
+
+
+def test_prepare_prompt_normalizes_and_trims():
+    from voice.config import Config
+    from voice.engines import SAMPLE_RATE, TARGET_RMS, ZipVoiceEngine
+
+    engine = ZipVoiceEngine(Config())
+    rate = 44100
+    speech = harmonic_tone(2.0, 150.0, rate) * 0.06
+    silence = np.zeros(int(rate * 0.4), dtype=np.float32)
+    prompt, original_rms = engine.prepare_prompt(np.concatenate([silence, speech, silence]), rate)
+    assert len(prompt) / SAMPLE_RATE < 2.6, "首尾静音应该被去掉"
+    assert original_rms < TARGET_RMS
+    assert abs(rms(prompt) - TARGET_RMS) < 0.02, "参考音频音量要对齐到目标值"

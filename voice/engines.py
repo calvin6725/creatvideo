@@ -158,9 +158,7 @@ class ZipVoiceEngine:
                 f"AI 克隆引擎已就绪（{self.model_dir.name if self.model_dir else 'ZipVoice'} · {self.num_step} 步）",
                 self.device, self.dtype, str(self.model_dir or ""),
             )
-        try:
-            import torch  # noqa: F401
-        except Exception:
+        if not _torch_installed():
             return EngineStatus("ai", False, "未安装 PyTorch，运行“安装AI克隆引擎.bat”即可启用")
         model_dir = find_model_dir(self.cfg)
         if model_dir is None:
@@ -186,11 +184,21 @@ class ZipVoiceEngine:
             return "cpu"
 
     def device_report(self) -> dict:
-        info = {"device": self.device, "cuda": False, "gpu": "", "vram_gb": 0.0, "torch": "", "dtype": self._dtype_name()}
+        """报告显卡/框架信息，供页面显示（模型未载入时也能显示）。"""
+        info = {
+            "device": self.device,
+            "cuda": False,
+            "gpu": "",
+            "vram_gb": 0.0,
+            "torch": "",
+            "cuda_version": "",
+            "dtype": self._dtype_name(),
+        }
         try:
             import torch
 
             info["torch"] = torch.__version__
+            info["cuda_version"] = getattr(torch.version, "cuda", "") or ""
             if torch.cuda.is_available():
                 props = torch.cuda.get_device_properties(0)
                 info.update(cuda=True, gpu=props.name, vram_gb=round(props.total_memory / 1024 ** 3, 2))
@@ -298,9 +306,31 @@ class ZipVoiceEngine:
         self.fbank = helpers["VocosFbank"]()
         self.model = model
         self.vocoder = vocoder
-        log.info("ZipVoice 已载入：%s (%s, %s, %d 步)", model_dir, self.device, self.dtype, self.num_step)
+        if self.device == "cuda":
+            try:
+                allocated = torch.cuda.memory_allocated() / 1024 ** 3
+                log.info("ZipVoice 已载入：%s (%s, %s, %d 步, 显存占用 %.2fGB)",
+                         model_dir, self.device, self.dtype, self.num_step, allocated)
+            except Exception:
+                log.info("ZipVoice 已载入：%s (%s, %s, %d 步)", model_dir, self.device, self.dtype, self.num_step)
+        else:
+            log.info("ZipVoice 已载入：%s (%s, %s, %d 步)", model_dir, self.device, self.dtype, self.num_step)
         if progress:
             progress(0.7, "载入完成")
+
+    def release(self) -> dict:
+        """释放模型占用的显存/内存（例如要开游戏、剪辑软件时）。"""
+        with self.lock:
+            was_loaded = self.model is not None
+            self.model = None
+            self.vocoder = None
+            self.tokenizer = None
+            self.fbank = None
+            self.warmed = False
+            self._helpers = None
+            self._error = None
+            self._empty_cache()
+            return {"released": was_loaded, "device": self.device}
 
     def _empty_cache(self) -> None:
         if self._torch is not None and self.device == "cuda":
@@ -373,7 +403,8 @@ class ZipVoiceEngine:
             if progress:
                 progress(0.8 + 0.19 * (index + 1) / len(sentences), f"已合成 {index + 1}/{len(sentences)} 句")
         audio = cross_fade_concat(chunks, SAMPLE_RATE, 0.08)
-        self._empty_cache()
+        # 模型留在显存里：连续生成/剪辑时不用反复加载（4GB 卡也放得下）
+        # 需要把显卡让给别的软件时，点页面上的“释放显存”。
         return audio, SAMPLE_RATE
 
     def _generate_with_retry(self, prompt, prompt_text, sentence, prompt_seconds, limits) -> np.ndarray:
@@ -422,6 +453,12 @@ class ZipVoiceEngine:
             log.warning("预热失败：%s", exc)
         finally:
             self._empty_cache()
+
+
+def _torch_installed() -> bool:
+    from importlib.util import find_spec
+
+    return find_spec("torch") is not None
 
 
 def harmonic_probe(rate: int, seconds: float = 1.2) -> np.ndarray:

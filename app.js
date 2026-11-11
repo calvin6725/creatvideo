@@ -544,6 +544,7 @@ function settingsPayload() {
   return { ...values(), style: selectedStyle(), engine: state.status?.engine };
 }
 
+/** 修掉进度条动画卡在 99% 的视觉问题：完成后停在使用者看得懂的位置 */
 function setJobProgress(progress, detail) {
   $('jobProgress').hidden = false;
   $('jobFill').style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
@@ -552,6 +553,11 @@ function setJobProgress(progress, detail) {
 
 async function synthesize(text) {
   if (!state.activeClone) { setStatus('先选择一个克隆音色', 'error'); return null; }
+  if (!state.status?.available) {
+    setMessage('speechStatus', '还没有可用的合成引擎：请双击“安装AI克隆引擎.bat”安装后刷新页面。', true);
+    setStatus('引擎未就绪', 'error');
+    return null;
+  }
   if (!text.trim()) { setStatus('请输入要朗读的文字', 'error'); return null; }
   state.busy = true;
   updateButtons();
@@ -642,13 +648,14 @@ function updateButtons() {
   $('transcribeBtn').disabled = state.busy || !hasAnalysis || !(state.status?.transcription?.available);
   $('playBtn').disabled = !state.originalUrl;
   $('playBestBtn').disabled = !state.originalUrl || !state.selected;
-  $('generateSpeechBtn').disabled = state.busy || !state.activeClone || !$('speechText').value.trim();
+  $('generateSpeechBtn').disabled = state.busy || !state.activeClone || !$('speechText').value.trim() || !state.status?.available;
   $('previewBtn').disabled = state.busy || !state.activeClone;
   $('generateSpeechLabel').textContent = state.busy ? '合成中…' : '生成朗读';
   $('speechCount').textContent = `${$('speechText').value.length} / 12000`;
   $('fileInput').disabled = state.busy || state.recording;
   $('recordBtn').disabled = state.busy;
   $('warmupBtn').disabled = state.busy || !(state.status?.ai?.available) || state.status?.engine !== 'ai';
+  $('releaseBtn').disabled = state.busy || state.status?.engine !== 'ai';
 }
 
 /* ---------------------------------------------------------------- 录音输入 */
@@ -729,6 +736,15 @@ function bind() {
       await loadStatus(true);
     } catch (error) { setStatus(error.message, 'error'); }
     $('warmupBtn').disabled = false;
+  });
+  $('releaseBtn').addEventListener('click', async () => {
+    $('releaseBtn').disabled = true;
+    try {
+      const data = await apiJson('/api/release', { method: 'POST' });
+      setStatus(data.released ? '已释放显存，下次合成会重新载入模型' : '模型当前未占用显存');
+      await loadStatus(true);
+    } catch (error) { setStatus(error.message, 'error'); }
+    $('releaseBtn').disabled = false;
   });
   $('generateSpeechBtn').addEventListener('click', generateSpeech);
   $('previewBtn').addEventListener('click', previewSpeech);
