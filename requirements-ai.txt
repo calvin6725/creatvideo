@@ -1,10 +1,13 @@
 # AI 克隆引擎（ZipVoice）运行依赖。
 #
-# ⚠ 请先单独安装对应你显卡的 PyTorch（GTX 1050 Ti 属于 Pascal，用 CUDA 12.1 版本最稳）：
+# ⚠ 先单独安装匹配你显卡的 PyTorch（GTX 1050 Ti 属于 Pascal，用 CUDA 12.1 最稳）：
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 #
-# 然后安装本文件：
+# 再安装本文件：
 #   pip install -r requirements-ai.txt
+#
+# 注意：piper_phonemize（音素化）和 faster-whisper（参考音频转写）是可选增强，
+#      国内网络可能装不上；安装脚本会把它们单独处理，失败也不影响克隆合成。
 
 vocos>=0.1.0
 safetensors>=0.4.3
@@ -14,4 +17,3 @@ jieba>=0.42.1
 pypinyin>=0.51.0
 cn2an>=0.5.22
 inflect>=7.0.0
-piper_phonemize>=1.5.9

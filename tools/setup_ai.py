@@ -109,7 +109,7 @@ def install_all(python: Path | None = None, mirror: bool = False, cpu: bool = Fa
         python = ensure_venv()
     install_base(Path(python))
     has_cuda = install_torch(Path(python), cpu)
-    install_ai_deps(Path(python))
+    install_ai_deps(Path(python), mirror)
     try:
         ensure_zipvoice_repo()
     except SystemExit as exc:  # git 不可用等
@@ -119,14 +119,36 @@ def install_all(python: Path | None = None, mirror: bool = False, cpu: bool = Fa
     return 0
 
 
-def install_ai_deps(python: Path) -> None:
+# 推理必需的包（装不上就是装不上，要提示用户）
+AI_CORE = ["vocos", "safetensors", "huggingface_hub", "lhotse", "jieba", "pypinyin", "cn2an", "inflect"]
+# 可选增强：语音识别 / 更准确的音素化
+AI_OPTIONAL = [("faster-whisper", "参考音频自动识别文字"), ("piper_phonemize", "更准确的音素化")]
+
+
+def _pip(python: Path, args: list[str], extra_index: list[str] | None = None) -> int:
+    cmd = [str(python), "-m", "pip", "install", *args, "--disable-pip-version-check"]
+    if extra_index:
+        cmd += ["-f", *extra_index]
+    return run(cmd, check=False).returncode
+
+
+def install_ai_deps(python: Path, mirror: bool = False) -> None:
     log("安装 ZipVoice 推理依赖")
-    run([str(python), "-m", "pip", "install", "-r", str(ROOT / "requirements-ai.txt")], check=False)
-    # piper_phonemize 需要从 k2-fsa 的轮子源安装
+    code = _pip(python, AI_CORE)
+    if code != 0:
+        print("! 核心依赖安装失败，请检查网络后重新运行本脚本")
+    # piper_phonemize 需要 k2-fsa 的轮子源；国内网络可能访问不了，失败不算致命
     run([
         str(python), "-m", "pip", "install", "piper_phonemize",
         "-f", "https://k2-fsa.github.io/icefall/piper_phonemize.html",
+        "--disable-pip-version-check",
     ], check=False)
+    for package, purpose in AI_OPTIONAL:
+        probe = run([str(python), "-c", f"import {package.replace('-', '_')}"], capture_output=True, text=True)
+        if probe.returncode == 0:
+            print(f"✓ {package} 已就绪（{purpose}）")
+        else:
+            print(f"! 跳过 {package}（{purpose}），不影响克隆合成")
 
 
 def ensure_zipvoice_repo() -> Path:

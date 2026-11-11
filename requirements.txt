@@ -1,20 +1,9 @@
-# 基础依赖（必须）：只用到 numpy，其余全是标准库
+# 运行本机服务 + 音频处理必需（其余全部是 Python 标准库）
 numpy>=1.24
 
-# 读取 mp3 / m4a / mp4 / webm 等压缩音频需要 ffmpeg（自带二进制，不用另外装）
+# 读取 mp3 / m4a / mp4 / webm 等压缩音频需要 ffmpeg（这个包自带二进制，不用另外装）
 imageio-ffmpeg>=0.4.9
 
-# 参考音频自动转写（可选、强烈建议）：CPU 就能跑，int8 量化速度快
-faster-whisper>=1.0.3
-
-# AI 声音克隆引擎（可选）：第一次运行“安装AI克隆引擎.bat”时会安装下面这些
-# torch / torchaudio 请按显卡 CUDA 版本单独安装，见 requirements-ai.txt
-vocos>=0.1.0
-safetensors>=0.4.3
-huggingface_hub>=0.23.0
-lhotse>=1.24
-jieba>=0.42.1
-pypinyin>=0.51.0
-cn2an>=0.5.22
-inflect>=7.0.0
-piper_phonemize>=1.5.9
+# 说明：AI 克隆引擎（torch / ZipVoice / vocos / 转写）不在这里，
+# 请通过“安装AI克隆引擎.bat”或 python tools/setup_ai.py 安装，
+# 见 requirements-ai.txt。

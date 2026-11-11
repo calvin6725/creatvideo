@@ -16,7 +16,8 @@
 
 1. 在项目里建 `.venv` 虚拟环境（不动系统 Python）；
 2. 安装 PyTorch：优先 CUDA 12.1 版本，装不上自动退回 CPU 版；
-3. 安装 ZipVoice 推理依赖 + 语音识别（faster-whisper）；
+3. 安装 ZipVoice 推理依赖（核心包 + 可选的语音识别 faster-whisper、音素化 piper_phonemize，
+   可选项装不上不影响克隆合成）；
 4. 下载 ZipVoice-Distill 模型（约 500 MB）和声码器（约 50 MB）；
 5. 打印显卡型号与显存，并写 `voice/config.json`。
 
@@ -27,6 +28,10 @@ python tools\setup_ai.py --mirror     # 国内网络用 hf-mirror.com 下模型
 python tools\setup_ai.py --cpu        # 强制 CPU 版 PyTorch（没显卡/驱动有问题时）
 python tools\setup_ai.py --skip-model # 只装依赖，不重新下模型
 ```
+
+> 也可以在页面里点 **「一键安装到本机」**：服务会后台执行同一个安装脚本，
+> 页面实时显示日志，装完自动切换成「AI 克隆」。
+> 国内网络建议勾选「用镜像下载模型」。
 
 ### 2. 打开页面
 
@@ -113,6 +118,7 @@ set CREATVIDEO_PORT=8100 && .venv\Scripts\python.exe voice_server.py
 | `retry_max_durations` | 显存不足时的重试预算 | `[8, 5]` |
 | `prompt_min/max_seconds` | 参考片段长度范围 | `2 / 8` |
 | `asr_model` | faster-whisper 模型大小 | `small` |
+| `num_step` | 扩散步数（0 = 按模型自动：蒸馏 8 步） | `0` |
 
 ---
 
@@ -122,7 +128,8 @@ set CREATVIDEO_PORT=8100 && .venv\Scripts\python.exe voice_server.py
 | --- | --- |
 | 页面显示「未安装 PyTorch」 | 双击 `安装AI克隆引擎.bat`；或 `python tools\setup_ai.py` |
 | 显示「未找到 ZipVoice 模型」 | `python tools\setup_ai.py --skip-torch --mirror` |
-| 合成报「显存不足」 | 把 `voice/config.json` 的 `max_duration` 调到 8，`dtype` 改 `fp16`；关掉游戏/剪辑软件 |
+| 合成报「显存不足」 | 引擎会自动缩小分块并降级 fp16；仍失败就把 `voice/config.json` 的 `max_duration` 调到 8，关掉游戏/剪辑软件 |
+| 想立刻把显卡让给别的软件 | 页面点 🔌「释放显存」，或 `POST /api/release` |
 | 声音不像 | 换一个更干净的 3–6 秒片段；**核对参考文字和音频是否一致**；参考音频别带背景音乐 |
 | 自动识别不可用 | `pip install faster-whisper`，或直接手动填参考文字 |
 | 打不开 localhost:8000 | 用 `启动声线实验室.bat` 启动；或看命令行窗口的报错 |
