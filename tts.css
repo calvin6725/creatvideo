@@ -1,0 +1,104 @@
+.upload-icon.text-icon {
+  background: #fff0ea;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.tts-card {
+  border-color: #efd8cf;
+  background: #fffaf8;
+}
+
+.tts-panel[hidden] { display: none; }
+
+.tts-panel {
+  margin-top: 10px;
+  padding: 13px;
+  border: 1px solid #efd8cf;
+  border-radius: 7px;
+  background: #fffaf8;
+}
+
+.tts-title,
+.tts-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tts-title b { font-size: 12px; }
+
+.tts-title button {
+  border: 0;
+  background: transparent;
+  color: #97a1a9;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tts-panel textarea {
+  width: 100%;
+  height: 112px;
+  margin-top: 11px;
+  padding: 10px;
+  border: 1px solid #e5d8d3;
+  border-radius: 5px;
+  resize: vertical;
+  background: #fff;
+  color: var(--ink);
+  font: 12px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+  outline: none;
+}
+
+.tts-panel textarea:focus {
+  border-color: #dda995;
+  box-shadow: 0 0 0 2px rgba(230, 107, 69, .08);
+}
+
+.tts-options { gap: 8px; margin-top: 8px; }
+
+.tts-field { display: block; margin-top: 9px; }
+.tts-field span { display: block; margin-bottom: 5px; color: #7b898f; font-size: 9px; }
+.tts-field select,
+
+.tts-options select {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px;
+  background: #fff;
+  color: #60707b;
+  font-size: 10px;
+}
+
+.tts-options span {
+  white-space: nowrap;
+  color: #9aa5ad;
+  font-size: 9px;
+}
+
+.tts-privacy { margin-top: 9px; color: #7b898f; font-size: 9px; }
+.tts-privacy span { color: #65a99f; font-size: 8px; }
+.tts-safety { margin-top: 6px; padding: 7px 8px; border-left: 2px solid #d9a28d; background: #fff; color: #8a7770; font-size: 9px; line-height: 1.5; }
+.voice-reference[hidden] { display: none; }
+.voice-reference { margin-top: 8px; padding: 9px; border: 1px dashed #d9c7c0; border-radius: 5px; background: #fff; }
+.voice-reference label { display: block; color: #5e6c75; font-size: 10px; font-weight: 600; }
+.voice-reference input { width: 100%; margin-top: 7px; color: #7c8991; font-size: 9px; }
+.voice-reference small { display: block; margin-top: 6px; color: #929da4; font-size: 9px; line-height: 1.45; }
+
+.tts-generate {
+  width: 100%;
+  margin-top: 10px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #fff;
+  padding: 9px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tts-generate:disabled { opacity: .45; cursor: not-allowed; }

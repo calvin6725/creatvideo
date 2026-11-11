@@ -1,0 +1,12 @@
+
+
+123
+
+打开项目中的 outputs 文件夹，在空白处按住 Shift 点击右键，选择“在此处打开 PowerShell”
+
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\voice_server.ps1 -Port 8000
+
+
+浏览器打开：
+http://localhost:8000/video.html

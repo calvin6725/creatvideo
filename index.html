@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>声线实验室</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="voice-lab.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">波</span><div><strong>声线实验室</strong><small>VOICE LAB</small></div></div>
+      <div class="top-actions"><span class="status-dot"></span><span id="statusText">准备就绪</span></div>
+    </header>
+
+    <section class="workspace">
+      <aside class="sidebar">
+        <div class="section-label">音频来源</div>
+        <div class="source-actions">
+          <label class="action-card primary" for="fileInput"><span class="action-icon">↑</span><span><b>导入音频</b><small>WAV / MP3 / M4A</small></span></label>
+          <button class="action-card" id="recordBtn"><span class="action-icon record-icon">●</span><span><b id="recordLabel">开始录音</b><small>使用麦克风录制</small></span></button>
+          <input id="fileInput" type="file" accept="audio/*" hidden>
+          <a class="action-card video-link" href="video.html" style="text-decoration:none;background:#f5f8f8;border-color:#d7e8e6"><span class="action-icon">▣</span><span><b>视频解说剪辑</b><small>加入背景音乐和自己的解说</small></span></a>
+        </div>
+        <div class="section-label preset-label">我的音色</div>
+        <div class="saved-voices" id="savedVoices"><p class="saved-empty">尚未保存音色</p></div>
+        <div class="section-label preset-label">快速音色</div>
+        <div class="preset-list">
+          <button class="preset active" data-preset="clean"><span class="preset-swatch clean"></span><span><b>自然人声</b><small>清晰 · 真实</small></span><i>›</i></button>
+          <button class="preset" data-preset="bright"><span class="preset-swatch bright"></span><span><b>清亮主播</b><small>明亮 · 有穿透力</small></span><i>›</i></button>
+          <button class="preset" data-preset="deep"><span class="preset-swatch deep"></span><span><b>低沉磁性</b><small>厚实 · 稳重</small></span><i>›</i></button>
+          <button class="preset" data-preset="warm"><span class="preset-swatch warm"></span><span><b>温暖磁性</b><small>厚实 · 近距离</small></span><i>›</i></button>
+          <button class="preset" data-preset="young"><span class="preset-swatch young"></span><span><b>年轻清透</b><small>轻快 · 有空气感</small></span><i>›</i></button>
+          <button class="preset" data-preset="mature"><span class="preset-swatch mature"></span><span><b>成熟稳重</b><small>沉稳 · 有共鸣</small></span><i>›</i></button>
+          <button class="preset" data-preset="soft"><span class="preset-swatch soft"></span><span><b>柔和气声</b><small>亲近 · 轻柔</small></span><i>›</i></button>
+          <button class="preset" data-preset="raspy"><span class="preset-swatch raspy"></span><span><b>低哑质感</b><small>沙哑 · 有颗粒</small></span><i>›</i></button>
+          <button class="preset" data-preset="cartoon"><span class="preset-swatch cartoon"></span><span><b>活泼角色</b><small>明快 · 夸张语调</small></span><i>›</i></button>
+          <button class="preset" data-preset="female"><span class="preset-swatch female"></span><span><b>自然女声</b><small>轻盈 · 清晰 · 柔和</small></span><i>›</i></button>
+          <button class="preset" data-preset="girl"><span class="preset-swatch girl"></span><span><b>少女清甜</b><small>明亮 · 轻快 · 有空气感</small></span><i>›</i></button>
+          <button class="preset" data-preset="woman"><span class="preset-swatch woman"></span><span><b>成熟女声</b><small>温暖 · 稳定 · 有共鸣</small></span><i>›</i></button>
+          <button class="preset" data-preset="neutral"><span class="preset-swatch neutral"></span><span><b>中性声线</b><small>自然 · 平衡 · 适合旁白</small></span><i>›</i></button>
+          <button class="preset" data-preset="femaleBright"><span class="preset-swatch femaleBright"></span><span><b>女声清亮</b><small>更薄 · 更亮 · 更靠前</small></span><i>›</i></button>
+          <button class="preset" data-preset="sweetGirl"><span class="preset-swatch sweetGirl"></span><span><b>少女甜声</b><small>清甜 · 轻快 · 软糯</small></span><i>›</i></button>
+          <button class="preset" data-preset="chipmunk"><span class="preset-swatch chipmunk"></span><span><b>夹子萌音</b><small>尖亮 · 夸张 · 搞怪</small></span><i>›</i></button>
+          <button class="preset" data-preset="duck"><span class="preset-swatch duck"></span><span><b>鸭子怪声</b><small>鼻音 · 弹跳 · 滑稽</small></span><i>›</i></button>
+          <button class="preset" data-preset="alien"><span class="preset-swatch alien"></span><span><b>外星电子</b><small>颤动 · 空间 · 科幻</small></span><i>›</i></button>
+          <button class="preset" data-preset="monster"><span class="preset-swatch monster"></span><span><b>怪兽低吼</b><small>低沉 · 粗粝 · 压迫</small></span><i>›</i></button>
+        </div>
+        <div class="sidebar-note"><span>ⓘ</span><p>录音在浏览器内分析，文字由本机语音合成，不会上传云端。</p></div>
+      </aside>
+
+      <section class="main-panel">
+        <div class="panel-heading"><div><span class="eyebrow">声音参考</span><h1 id="fileName">还没有音频</h1><p class="reference-status" id="referenceStatus" role="status">尚未导入声音</p></div><div class="duration" id="duration">00:00</div></div>
+        <div class="wave-card"><canvas id="waveform" width="1000" height="220"></canvas><div class="empty-wave" id="emptyWave"><span>♪</span><b>导入一段音频，开始塑造你的声音</b><small>也可以直接点击左侧开始录音</small></div><div class="playhead" id="playhead"></div></div>
+        <div class="transport"><button class="round-btn" id="playBtn" aria-label="播放或暂停">▶</button><div class="transport-time"><span id="currentTime">00:00</span><div class="progress"><div id="progressFill"></div></div><span id="totalTime">00:00</span></div><button class="text-btn" id="resetBtn">↺ 重置参数</button></div>
+
+        <div class="controls-header"><div><span class="eyebrow">声音塑形</span><h2>调节音色与语调</h2></div><select id="presetSelect" aria-label="选择预设"><option value="custom">自定义</option><option value="clean">自然人声</option><option value="bright">清亮主播</option><option value="deep">低沉磁性</option><option value="warm">温暖磁性</option><option value="young">年轻清透</option><option value="mature">成熟稳重</option><option value="soft">柔和气声</option><option value="raspy">低哑质感</option><option value="cartoon">活泼角色</option><option value="female">自然女声</option><option value="girl">少女清甜</option><option value="woman">成熟女声</option><option value="neutral">中性声线</option><option value="femaleBright">女声清亮</option><option value="sweetGirl">少女甜声</option><option value="chipmunk">夹子萌音</option><option value="duck">鸭子怪声</option><option value="alien">外星电子</option><option value="monster">怪兽低吼</option></select></div>
+        <div class="control-grid">
+          <div class="control-card"><div class="control-title"><span class="control-symbol">↕</span><span><b>音调</b><small>改变高低与年龄感</small></span><output id="pitchValue">0 st</output></div><input type="range" id="pitch" min="-12" max="12" step="1" value="0"><div class="range-labels"><span>低沉</span><span>原声</span><span>尖亮</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">☼</span><span><b>明亮度</b><small>高频细节与清晰度</small></span><output id="brightnessValue">0</output></div><input type="range" id="brightness" min="-100" max="100" step="1" value="0"><div class="range-labels"><span>柔和</span><span>平衡</span><span>明亮</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">◒</span><span><b>厚度</b><small>低频温暖与饱满感</small></span><output id="warmthValue">0</output></div><input type="range" id="warmth" min="-100" max="100" step="1" value="0"><div class="range-labels"><span>轻薄</span><span>平衡</span><span>厚实</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">✦</span><span><b>存在感</b><small>让声音更靠前</small></span><output id="presenceValue">0</output></div><input type="range" id="presence" min="-100" max="100" step="1" value="0"><div class="range-labels"><span>收敛</span><span>平衡</span><span>突出</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">▦</span><span><b>空间感</b><small>添加自然环境回响</small></span><output id="roomValue">0%</output></div><input type="range" id="room" min="0" max="60" step="1" value="0"><div class="range-labels"><span>干声</span><span>小空间</span><span>大厅</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">⚡</span><span><b>沙哑颗粒</b><small>增加粗粝与质感</small></span><output id="driveValue">0%</output></div><input type="range" id="drive" min="0" max="80" step="1" value="0"><div class="range-labels"><span>干净</span><span>轻微</span><span>强烈</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">≈</span><span><b>共鸣位置</b><small>胸腔、口腔与头腔</small></span><output id="resonanceValue">0</output></div><input type="range" id="resonance" min="-100" max="100" step="1" value="0"><div class="range-labels"><span>胸腔</span><span>平衡</span><span>头腔</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">∿</span><span><b>鼻腔感</b><small>改变声音的前置感</small></span><output id="nasalityValue">0</output></div><input type="range" id="nasality" min="-100" max="100" step="1" value="0"><div class="range-labels"><span>圆润</span><span>自然</span><span>鼻音</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">♧</span><span><b>气声</b><small>增加呼吸与空气感</small></span><output id="breathValue">0%</output></div><input type="range" id="breath" min="0" max="100" step="1" value="0"><div class="range-labels"><span>实声</span><span>轻柔</span><span>空气感</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">⌁</span><span><b>颤音</b><small>语调的自然起伏</small></span><output id="vibratoValue">0%</output></div><input type="range" id="vibrato" min="0" max="70" step="1" value="0"><div class="range-labels"><span>平直</span><span>自然</span><span>起伏</span></div></div>
+          <div class="control-card"><div class="control-title"><span class="control-symbol">↔</span><span><b>语速</b><small>快慢与节奏感</small></span><output id="speedValue">0%</output></div><input type="range" id="speed" min="-25" max="25" step="1" value="0"><div class="range-labels"><span>慢</span><span>原速</span><span>快</span></div></div>
+        </div>
+        <div class="footer-bar"><span id="engineHint">导入音频后即可试听处理效果</span><button class="export-btn secondary-btn" id="exportBtn" disabled><i data-lucide="download" aria-hidden="true"></i> 导出处理录音</button></div>
+
+        <section class="voice-builder" aria-labelledby="builderTitle">
+          <div class="builder-heading"><div><span class="eyebrow">新音色</span><h2 id="builderTitle">保存调节后的音色</h2></div><span class="engine-badge">本地音色匹配</span></div>
+          <div class="builder-fields">
+            <label class="lab-field"><span>音色名称</span><input id="voiceName" type="text" maxlength="50" placeholder="为这个声音起个名字" autocomplete="off"></label>
+            <label class="lab-field"><span>朗读基础声线</span><select id="baseVoice" disabled><option value="">正在检查本机语音…</option></select></label>
+            <button class="export-btn" id="createVoiceBtn" disabled><i data-lucide="audio-lines" aria-hidden="true"></i><span id="createVoiceLabel">生成新音色</span></button>
+          </div>
+          <p class="lab-message" id="voiceBuildStatus" role="status">等待导入声音</p>
+          <div class="service-state"><span id="voiceServiceStatus">正在检查本机语音服务…</span><button class="icon-btn" id="retryVoices" type="button" aria-label="重新检查语音服务" title="重新检查语音服务"><i data-lucide="refresh-cw" aria-hidden="true"></i></button></div>
+        </section>
+
+        <section class="speech-editor" id="speechEditor" aria-labelledby="speechTitle" hidden>
+          <div class="builder-heading"><div><span class="eyebrow">文字朗读</span><h2 id="speechTitle">用新音色朗读</h2></div><span class="engine-badge" id="activeVoiceName"></span></div>
+          <label class="lab-field speech-text-label" for="speechText">朗读文本</label>
+          <textarea id="speechText" rows="6" maxlength="12000" placeholder="输入要用这个音色朗读的文字…"></textarea>
+          <div class="speech-actions"><span class="text-count" id="speechCount">0 / 12000</span><button class="export-btn" id="generateSpeechBtn" disabled><i data-lucide="play" aria-hidden="true"></i><span id="generateSpeechLabel">生成朗读</span></button></div>
+          <p class="lab-message" id="speechStatus" role="status">音色已就绪</p>
+          <div class="speech-result" id="speechResult" hidden>
+            <div class="result-heading"><strong id="speechResultName">朗读音频</strong><button class="export-btn secondary-btn" id="exportSpeechBtn"><i data-lucide="download" aria-hidden="true"></i>导出朗读 WAV</button></div>
+            <audio id="speechAudio" controls preload="metadata"></audio>
+          </div>
+        </section>
+      </section>
+    </section>
+  </main>
+  <script src="vendor/lucide.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
