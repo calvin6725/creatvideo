@@ -1,0 +1,17 @@
+# 本地虚拟环境 / 缓存
+.venv/
+__pycache__/
+*.pyc
+.cache/
+
+# 运行数据：克隆音色、上传的参考音频、生成的任务音频（全部只在本机）
+data/
+models/
+third_party/
+voice/config.json
+
+# 测试产物
+.test-output/*.wav
+.test-output/*.wav.tmp
+node_modules/
+package-lock.json

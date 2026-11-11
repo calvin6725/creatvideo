@@ -1,0 +1,12 @@
+{
+  "devDependencies": {
+    "playwright": "1.48.0"
+  },
+  "name": "creatvideo-voice-lab",
+  "private": true,
+  "description": "声线实验室 · 本机 AI 声音克隆（前端测试脚本用）",
+  "scripts": {
+    "test:ui": "node tools/ui_smoke_test.cjs",
+    "test:api": "node tests/voice-api.cjs"
+  }
+}

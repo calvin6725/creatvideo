@@ -102,3 +102,13 @@
 }
 
 .tts-generate:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 克隆音色版文字解说面板 */
+.tts-inline { display: grid; gap: 6px; }
+.tts-inline label { display: grid; grid-template-columns: 34px 1fr 46px; align-items: center; gap: 6px; color: #7b898f; font-size: 10px; }
+.tts-inline input[type=range] { width: 100%; accent-color: var(--accent); }
+.tts-inline output { color: var(--accent); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
+.tts-options .tts-link { color: #b4c4c2; font-size: 9px; text-decoration: none; }
+.tts-options .tts-link:hover { color: var(--teal); }
+.tts-setup { margin-top: 9px; padding: 9px; border: 1px dashed #e0cfc7; border-radius: 5px; background: #fff; color: #8a7770; font-size: 10px; line-height: 1.55; }
+.tts-setup a { color: var(--accent); text-decoration: none; font-weight: 600; }

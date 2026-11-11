@@ -14,16 +14,27 @@
       <label class="upload-card" for="musicInput"><span class="upload-icon music">♫</span><span><b>背景音乐</b><small>MP3 / WAV / M4A</small></span></label><input id="musicInput" type="file" accept="audio/*" hidden>
       <label class="upload-card" for="voiceInput"><span class="upload-icon voice">●</span><span><b>导入解说</b><small>自己的录音文件</small></span></label><input id="voiceInput" type="file" accept="audio/*" hidden>
       <label class="upload-card" for="imageInput"><span class="upload-icon image-icon">▧</span><span><b>添加图片 / 表情包</b><small>PNG / JPG / GIF</small></span></label><input id="imageInput" type="file" accept="image/*" hidden>
-      <button class="record-card" id="recordVoice"><span class="upload-icon record">●</span><span><b id="recordText">录制解说</b><small>沿用声线实验室当前音色</small></span></button>
-      <button class="record-card tts-card" id="openTts"><span class="upload-icon text-icon">文</span><span><b>输入文字生成解说</b><small id="ttsAvailability">正在检查 Windows 本机语音…</small></span></button>
+      <button class="record-card" id="recordVoice"><span class="upload-icon record">●</span><span><b id="recordText">录制解说</b><small>直接录，或导入自己的录音</small></span></button>
+      <button class="record-card tts-card" id="openTts"><span class="upload-icon text-icon">文</span><span><b>克隆音色生成解说</b><small id="ttsAvailability">正在检查本机克隆引擎…</small></span></button>
       <section class="tts-panel" id="ttsPanel" hidden>
-        <div class="tts-title"><b>文字生成解说</b><button id="closeTts" aria-label="关闭">×</button></div>
+        <div class="tts-title"><b>用克隆音色生成解说</b><button id="closeTts" aria-label="关闭">×</button></div>
         <textarea id="ttsText" maxlength="12000" placeholder="输入要朗读的解说词…"></textarea>
-        <label class="tts-field"><span>音色来源</span><select id="ttsStyle" aria-label="选择音色来源"><option value="current">沿用声线实验室</option><option value="myVoice">我的声音参考（轻量匹配）</option><option value="cinemaMale">原创沉稳男声</option><option value="cinemaFemale">原创温柔女声</option><option value="documentary">纪录片旁白</option><option value="suspense">悬疑低语</option><option value="energetic">高能解说</option></select></label>
-        <div class="voice-reference" id="voiceReference" hidden><label for="referenceVoice">导入本人或已授权的清晰录音</label><input id="referenceVoice" type="file" accept="audio/*"><small id="referenceStatus">建议 15–60 秒，单人、无音乐、无混响。</small></div>
-        <div class="tts-options"><select id="ttsVoice" aria-label="选择本机声线"><option>正在读取声线…</option></select><span id="ttsCount">0 / 12000</span></div>
-        <div class="tts-privacy"><span>●</span> Windows 本机合成，文字不会上传</div>
-        <div class="tts-safety">“我的声音参考”会在本机匹配音色特征，不会上传；它是轻量匹配，不等同于高相似度 AI 声音克隆。仅限本人或已明确授权的录音。</div>
+        <label class="tts-field"><span>克隆音色</span><select id="ttsClone" aria-label="选择克隆音色"><option value="">还没有克隆音色</option></select></label>
+        <label class="tts-field"><span>语气风格</span><select id="ttsStyle" aria-label="选择语气风格">
+          <option value="natural">自然克隆（最像原声）</option>
+          <option value="broadcast">播音清晰</option>
+          <option value="warm">温暖厚实</option>
+          <option value="deep">低沉磁性</option>
+          <option value="soft">轻柔气声</option>
+          <option value="energetic">高能解说（更快更亮）</option>
+        </select></label>
+        <div class="tts-field"><span>音调 / 语速微调</span>
+          <div class="tts-inline"><label>音调 <input id="ttsPitch" type="range" min="-8" max="8" step="1" value="0"><output id="ttsPitchValue">0 st</output></label>
+          <label>语速 <input id="ttsSpeed" type="range" min="-20" max="20" step="1" value="0"><output id="ttsSpeedValue">0%</output></label></div>
+        </div>
+        <div class="tts-options"><span id="ttsCount">0 / 12000</span><a href="index.html" class="tts-link">去建立新音色 ↗</a></div>
+        <div class="tts-privacy"><span>●</span> 本机 AI 克隆，文字与音频不会上传</div>
+        <div class="tts-safety">仅用于本人或已获得明确授权的声音。请勿用于伪造他人身份、诈骗或误导性内容。</div>
         <button class="tts-generate" id="generateVoice" disabled>生成并放入“我的解说”</button>
       </section>
       <div class="tips"><b>四类素材</b><p>视频、背景音乐、解说和图片/表情包都在浏览器本地处理。图片会按设定的时间叠加到导出画面。</p></div>

@@ -1,669 +1,900 @@
+/* 声线实验室 · 前端
+ *
+ * 流程：导入音频/视频 → 本机分析（VAD 选段 + 自动识别文字）→ 建立克隆音色
+ *       → 输入文字 → 后端的 AI 克隆模型用这个音色朗读 → 试听 / 导出
+ *
+ * 所有重活（解码、选段、识别、合成、后处理）都在本机 Python 服务里做，
+ * 浏览器只负责界面和试听。参考音频与文字不会离开这台电脑。
+ */
 const $ = id => document.getElementById(id);
+
+const CONTROL_IDS = ['pitch', 'formant', 'speed', 'brightness', 'warmth', 'presence', 'breath', 'room', 'deess'];
+
+const STYLES = {
+  natural:   { pitch: 0, formant: 0, speed: 0, brightness: 0, warmth: 0, presence: 0, breath: 0, room: 0, deess: 35, style: 'natural' },
+  broadcast: { pitch: 0, formant: 6, speed: 3, brightness: 12, warmth: -6, presence: 30, breath: 0, room: 2, deess: 45, style: 'broadcast' },
+  warm:      { pitch: -1, formant: -8, speed: -2, brightness: -6, warmth: 32, presence: 8, breath: 6, room: 4, deess: 35, style: 'warm' },
+  deep:      { pitch: -3, formant: -26, speed: -4, brightness: -18, warmth: 40, presence: 6, breath: 0, room: 5, deess: 30, style: 'deep' },
+  soft:      { pitch: 1, formant: 4, speed: -2, brightness: -4, warmth: 8, presence: -10, breath: 45, room: 10, deess: 40, style: 'soft' },
+  female:    { pitch: 4, formant: 34, speed: 2, brightness: 14, warmth: -14, presence: 16, breath: 14, room: 3, deess: 40, style: 'natural' },
+  cute:      { pitch: 7, formant: 52, speed: 6, brightness: 26, warmth: -24, presence: 26, breath: 24, room: 2, deess: 45, style: 'natural' },
+  cartoon:   { pitch: 10, formant: 70, speed: 9, brightness: 36, warmth: -34, presence: 34, breath: 12, room: 2, deess: 35, style: 'broadcast' }
+};
+
 const state = {
-  buffer: null, source: null, context: null, playing: false, startedAt: 0,
-  offset: 0, raf: null, recording: false, recorder: null, chunks: [],
-  reference: null, loading: false, loadVersion: 0, saving: false, exporting: false,
-  voices: [], profiles: [], activeProfile: null, generating: false,
-  speechBlob: null, speechUrl: null, speechVersion: 0, voiceRequest: 0,
-  playbackNodes: [], rate: 1
+  status: null,
+  analysis: null,        // 当前导入音频的分析结果
+  selected: null,        // 选中的候选片段 {start, stop}
+  buffer: null,          // 解码后的 AudioBuffer（画波形 + 试听原始录音）
+  originalUrl: null,
+  clones: [],
+  activeClone: null,
+  playingOriginal: false,
+  playingSegment: false,
+  audio: null,           // 复用的 <audio>（播放原声 / 片段 / 结果）
+  speechUrl: null,
+  speechBlob: null,
+  busy: false,
+  jobTimer: null,
+  jobId: null,
+  recording: false,
+  recorder: null,
+  chunks: []
 };
-const presets = {
-  clean:   { pitch: 0, brightness: 0, warmth: 0, presence: 0, room: 0, drive: 0, resonance: 0, nasality: 0, breath: 0, vibrato: 0, speed: 0 },
-  bright:  { pitch: 2, brightness: 42, warmth: -8, presence: 28, room: 5, drive: 0, resonance: 30, nasality: 8, breath: 8, vibrato: 4, speed: 4 },
-  deep:    { pitch: -4, brightness: -25, warmth: 58, presence: 8, room: 8, drive: 3, resonance: -55, nasality: -10, breath: 0, vibrato: 5, speed: -4 },
-  warm:    { pitch: -2, brightness: -10, warmth: 72, presence: 16, room: 6, drive: 2, resonance: -25, nasality: -8, breath: 4, vibrato: 8, speed: -2 },
-  young:   { pitch: 4, brightness: 36, warmth: -20, presence: 35, room: 3, drive: 0, resonance: 45, nasality: 6, breath: 18, vibrato: 5, speed: 8 },
-  mature:  { pitch: -3, brightness: -18, warmth: 48, presence: 20, room: 5, drive: 1, resonance: -38, nasality: -6, breath: 2, vibrato: 7, speed: -5 },
-  soft:    { pitch: 1, brightness: 12, warmth: 18, presence: -8, room: 11, drive: 0, resonance: 20, nasality: -4, breath: 62, vibrato: 8, speed: -2 },
-  raspy:   { pitch: -2, brightness: -8, warmth: 38, presence: 38, room: 2, drive: 18, resonance: -15, nasality: 14, breath: 18, vibrato: 6, speed: -3 },
-  cartoon: { pitch: 6, brightness: 48, warmth: -28, presence: 48, room: 4, drive: 1, resonance: 55, nasality: 25, breath: 10, vibrato: 18, speed: 10 }
-  ,female: { pitch: 5, brightness: 25, warmth: -8, presence: 24, room: 4, drive: 0, resonance: 38, nasality: 4, breath: 22, vibrato: 6, speed: 3 }
-  ,girl: { pitch: 7, brightness: 42, warmth: -24, presence: 38, room: 3, drive: 0, resonance: 52, nasality: 12, breath: 30, vibrato: 9, speed: 8 }
-  ,woman: { pitch: 3, brightness: 8, warmth: 25, presence: 20, room: 5, drive: 0, resonance: 18, nasality: -4, breath: 12, vibrato: 7, speed: 0 }
-  ,neutral: { pitch: 1, brightness: 12, warmth: 5, presence: 20, room: 3, drive: 0, resonance: 8, nasality: 0, breath: 8, vibrato: 4, speed: 0 }
-  ,femaleBright: { pitch: 8, brightness: 62, warmth: -62, presence: 42, room: 2, drive: 0, resonance: 62, nasality: 2, breath: 20, vibrato: 5, speed: 2 }
-  ,sweetGirl: { pitch: 10, brightness: 70, warmth: -72, presence: 52, room: 3, drive: 0, resonance: 72, nasality: 10, breath: 34, vibrato: 8, speed: 7 }
-  ,chipmunk: { pitch: 12, brightness: 76, warmth: -82, presence: 58, room: 2, drive: 4, resonance: 80, nasality: 24, breath: 20, vibrato: 12, speed: 14 }
-  ,duck: { pitch: 3, brightness: 18, warmth: -12, presence: 36, room: 8, drive: 12, resonance: 28, nasality: 78, breath: 6, vibrato: 16, speed: 5 }
-  ,alien: { pitch: 5, brightness: 52, warmth: -38, presence: 42, room: 30, drive: 26, resonance: 48, nasality: 36, breath: 18, vibrato: 42, speed: -4 }
-  ,monster: { pitch: -10, brightness: -46, warmth: 86, presence: 14, room: 12, drive: 42, resonance: -86, nasality: -24, breath: 0, vibrato: 4, speed: -14 }
+
+/* ------------------------------------------------------------------ 工具 */
+function setStatus(text, kind = '') {
+  $('statusText').textContent = text;
+  $('statusDot').className = 'status-dot' + (kind ? ` ${kind}` : '');
+}
+const fmt = seconds => {
+  seconds = Math.max(0, Number(seconds) || 0);
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 };
-const controls = ['pitch','brightness','warmth','presence','room','drive','resonance','nasality','breath','vibrato','speed'];
-const fmt = seconds => { seconds = Math.max(0, seconds || 0); return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(Math.floor(seconds%60)).padStart(2,'0')}`; };
-function setStatus(text){ $('statusText').textContent = text; }
-function drawWave(){
-  const canvas=$('waveform'), ctx=canvas.getContext('2d'), w=canvas.width, h=canvas.height; ctx.clearRect(0,0,w,h);
-  ctx.fillStyle='#f7f9fa'; ctx.fillRect(0,0,w,h);
-  if(!state.buffer){ $('emptyWave').style.display='flex'; return; }
-  $('emptyWave').style.display='none'; const data=state.buffer.getChannelData(0), step=Math.ceil(data.length/w), amp=h*.38;
-  ctx.beginPath(); ctx.strokeStyle='#72a7a2'; ctx.lineWidth=1.5;
-  for(let i=0;i<w;i++){ let min=1,max=-1; for(let j=0;j<step;j++){const v=data[i*step+j]||0; if(v<min)min=v;if(v>max)max=v;} ctx.moveTo(i,h/2+min*amp);ctx.lineTo(i,h/2+max*amp); } ctx.stroke();
-  ctx.strokeStyle='rgba(78,150,145,.14)'; ctx.lineWidth=1; for(let y=35;y<h;y+=50){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
-}
-function audioContext() {
-  if (!state.context || state.context.state === 'closed') {
-    state.context = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  return state.context;
-}
-
-async function loadBlob(blob, name) {
-  const version = ++state.loadVersion;
-  stop();
-  state.loading = true;
-  state.buffer = null;
-  state.reference = null;
-  state.offset = 0;
-  $('fileName').textContent = name;
-  $('duration').textContent = $('totalTime').textContent = '00:00';
-  $('referenceStatus').textContent = '正在读取并分析声音…';
-  drawWave();
-  updateProgress(0);
-  updateBuilder();
-  try {
-    if (blob.size > 100 * 1024 * 1024) throw new Error('请选择小于 100 MB 的音频');
-    const buffer = await audioContext().decodeAudioData(await blob.arrayBuffer());
-    if (version !== state.loadVersion) return;
-    state.buffer = buffer;
-    $('duration').textContent = $('totalTime').textContent = fmt(buffer.duration);
-    drawWave();
-    const features = await voiceFeatures(buffer);
-    if (version !== state.loadVersion) return;
-    if (buffer.duration < 1) throw new Error('建立音色需要至少 1 秒的清晰人声');
-    if (features.level < .0001) throw new Error('录音音量太低，无法提取音色，请换一段清晰人声');
-    state.reference = { name, duration: buffer.duration, features };
-    $('referenceStatus').textContent = `已提取音色参考 · ${buffer.numberOfChannels} 声道 · ${Math.round(buffer.sampleRate / 100) / 10} kHz`;
-    if (!$('voiceName').value.trim()) $('voiceName').value = `${name.replace(/\.[^.]+$/, '').slice(0, 40)} · 新音色`;
-    $('engineHint').textContent = '试听调节效果，满意后生成新音色';
-    setStatus('声音已载入，音色参考已就绪');
-  } catch (error) {
-    if (version !== state.loadVersion) return;
-    $('referenceStatus').textContent = error.message || '无法读取音频，请换一个文件';
-    setStatus('声音参考未建立');
-  } finally {
-    if (version === state.loadVersion) {
-      state.loading = false;
-      updateBuilder();
-    }
-  }
-}
-function values(){ return Object.fromEntries(controls.map(id=>[id,Number($(id).value)])); }
-function updateLabels(){ const v=values(); $('pitchValue').textContent=`${v.pitch>0?'+':''}${v.pitch} st`; $('brightnessValue').textContent=`${v.brightness>0?'+':''}${v.brightness}`; $('warmthValue').textContent=`${v.warmth>0?'+':''}${v.warmth}`; $('presenceValue').textContent=`${v.presence>0?'+':''}${v.presence}`; $('roomValue').textContent=`${v.room}%`; $('driveValue').textContent=`${v.drive}%`; $('resonanceValue').textContent=`${v.resonance>0?'+':''}${v.resonance}`; $('nasalityValue').textContent=`${v.nasality>0?'+':''}${v.nasality}`; $('breathValue').textContent=`${v.breath}%`; $('vibratoValue').textContent=`${v.vibrato}%`; $('speedValue').textContent=`${v.speed>0?'+':''}${v.speed}%`; }
-function readStored(key, fallback) {
-  try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; }
-  catch { return fallback; }
-}
-function persistSettings(name) {
-  try {
-    localStorage.setItem('voiceLabSettings', JSON.stringify({
-      name: name || $('presetSelect').value || 'custom', values: values()
-    }));
-  } catch { setStatus('浏览器存储不可用，当前参数仍可使用'); }
-}
-function applyPreset(name) {
-  const preset = presets[name];
-  if (!preset) return;
-  controls.forEach(id => $(id).value = preset[id]);
-  $('presetSelect').value = name;
-  document.querySelectorAll('.preset').forEach(button => button.classList.toggle('active', button.dataset.preset === name));
-  updateLabels();
-  persistSettings(name);
-  settingsChanged();
-}
-function makeGraph(ctx, destination, v, nodes = []){
-  const input=ctx.createGain(), highpass=ctx.createBiquadFilter(), high=ctx.createBiquadFilter(), low=ctx.createBiquadFilter(), air=ctx.createBiquadFilter(), resonance=ctx.createBiquadFilter(), nasal=ctx.createBiquadFilter(), peak=ctx.createBiquadFilter(), shaper=ctx.createWaveShaper(), compressor=ctx.createDynamicsCompressor(), wet=ctx.createGain(), dry=ctx.createGain(), delay=ctx.createDelay(1), feedback=ctx.createGain();
-  nodes.push(input, highpass, high, low, air, resonance, nasal, peak, shaper, compressor, wet, dry, delay, feedback);
-  highpass.type='highpass'; highpass.frequency.value=Math.max(35,70+Math.max(0,v.pitch)*12+Math.max(0,-v.warmth)*.35); highpass.Q.value=.55;
-  high.type='highshelf'; high.frequency.value=3200; high.gain.value=v.brightness*.15+v.breath*.08; low.type='lowshelf'; low.frequency.value=220; low.gain.value=v.warmth*.18;
-  air.type='highshelf'; air.frequency.value=6200; air.gain.value=Math.max(-6,v.brightness*.08+v.breath*.04);
-  resonance.type='peaking'; resonance.frequency.value=900+v.resonance*5; resonance.Q.value=.85; resonance.gain.value=v.resonance*.08;
-  nasal.type='peaking'; nasal.frequency.value=1100; nasal.Q.value=1.35; nasal.gain.value=v.nasality*.12;
-  peak.type='peaking'; peak.frequency.value=1700+v.pitch*85; peak.Q.value=1.1; peak.gain.value=v.presence*.12;
-  const amount=v.drive/100; if(amount>0){ const curve=new Float32Array(44100); for(let i=0;i<curve.length;i++){const x=i*2/curve.length-1;curve[i]=(1+amount*18)*x/(1+amount*18*Math.abs(x));} shaper.curve=curve; shaper.oversample='4x'; } else shaper.curve=null;
-  compressor.threshold.value=-18; compressor.knee.value=18; compressor.ratio.value=3; compressor.attack.value=.003; compressor.release.value=.2;
-  wet.gain.value=v.room/100; dry.gain.value=1-v.room/180; delay.delayTime.value=.09; feedback.gain.value=.18;
-  compressor.threshold.value -= v.breath*.035;
-  input.connect(highpass).connect(high).connect(low).connect(air).connect(resonance).connect(nasal).connect(peak).connect(shaper).connect(compressor); compressor.connect(dry).connect(destination); compressor.connect(delay).connect(wet).connect(destination); delay.connect(feedback).connect(delay); return input;
-}
-function stop(preserveOffset = false) {
-  if (preserveOffset && state.playing) {
-    state.offset = Math.min(state.buffer.duration, state.offset + (state.context.currentTime - state.startedAt) * state.rate);
-  }
-  state.playing = false;
-  cancelAnimationFrame(state.raf);
-  if (state.source) {
-    state.source.onended = null;
-    try { state.source.stop(); } catch {}
-    state.source.disconnect();
-    state.source = null;
-  }
-  if (state.modulator) {
-    try { state.modulator.stop(); } catch {}
-    state.modulator.disconnect();
-    state.modulator = null;
-  }
-  state.playbackNodes.forEach(node => node.disconnect());
-  state.playbackNodes = [];
-  $('playBtn').textContent = '▶';
-}
-function tuneSource(ctx, source, v, nodes = []) {
-  source.detune.value = v.pitch * 100;
-  source.playbackRate.value = Math.max(.7, Math.min(1.3, 1 + v.speed / 100));
-  if (v.vibrato <= 0) return null;
-  const lfo = ctx.createOscillator(), depth = ctx.createGain();
-  lfo.frequency.value = 4.8;
-  depth.gain.value = v.vibrato * 1.6;
-  lfo.connect(depth).connect(source.detune);
-  nodes.push(depth);
-  lfo.start();
-  return lfo;
-}
-async function play() {
-  if (!state.buffer) return;
-  if (state.playing) { stop(true); setStatus('试听已暂停'); return; }
-  try {
-    const ctx = audioContext();
-    await ctx.resume();
-    if (state.playing || !state.buffer) return;
-    $('speechAudio').pause();
-    const v = values(), source = ctx.createBufferSource();
-    source.buffer = state.buffer;
-    state.modulator = tuneSource(ctx, source, v, state.playbackNodes);
-    source.connect(makeGraph(ctx, ctx.destination, v, state.playbackNodes));
-    state.rate = Math.pow(2, v.pitch / 12) * Math.max(.7, Math.min(1.3, 1 + v.speed / 100));
-    if (state.offset >= state.buffer.duration) state.offset = 0;
-    source.onended = () => {
-      if (state.source !== source) return;
-      state.offset = 0;
-      stop();
-      updateProgress(0);
-      setStatus('试听结束');
-    };
-    state.source = source;
-    state.startedAt = ctx.currentTime;
-    state.playing = true;
-    source.start(0, state.offset);
-    $('playBtn').textContent = 'Ⅱ';
-    animate();
-    setStatus('正在试听处理效果');
-  } catch { stop(); setStatus('无法播放音频，请重试'); }
-}
-function animate() {
-  if (!state.playing || !state.buffer) return;
-  const elapsed = (state.context.currentTime - state.startedAt) * state.rate + state.offset;
-  updateProgress(Math.min(1, elapsed / state.buffer.duration));
-  state.raf = requestAnimationFrame(animate);
-}
-function updateProgress(ratio){ $('progressFill').style.width=`${ratio*100}%`; $('playhead').style.left=`${ratio*100}%`; $('playhead').style.display=state.buffer?'block':'none'; $('currentTime').textContent=fmt((state.buffer?.duration||0)*ratio); }
-async function record() {
-  if (state.recording) {
-    if (state.recorder.state === 'recording') state.recorder.stop();
-    return;
-  }
-  let stream;
-  try {
-    stop();
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
-    state.chunks = [];
-    state.recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    state.recorder.ondataavailable = event => { if (event.data.size) state.chunks.push(event.data); };
-    state.recorder.onstop = () => {
-      stream.getTracks().forEach(track => track.stop());
-      state.recording = false;
-      $('recordLabel').textContent = '开始录音';
-      $('recordBtn').classList.remove('recording');
-      loadBlob(new Blob(state.chunks, { type: state.recorder.mimeType || 'audio/webm' }), '我的录音.webm');
-    };
-    state.recorder.start();
-    state.recording = true;
-    updateBuilder();
-    $('recordLabel').textContent = '停止录音';
-    $('recordBtn').classList.add('recording');
-    setStatus('正在录音…');
-  } catch {
-    stream?.getTracks().forEach(track => track.stop());
-    setStatus('无法录音，请检查麦克风权限');
-  }
-}
-async function renderVoice(buffer, v) {
-  const rate = Math.max(.7, Math.min(1.3, 1 + v.speed / 100)) * Math.pow(2, v.pitch / 12);
-  const minimumRate = rate * Math.pow(2, -v.vibrato * 1.6 / 1200);
-  const duration = buffer.duration / minimumRate + (v.room > 0 ? .65 : .06);
-  const offline = new OfflineAudioContext(buffer.numberOfChannels, Math.ceil(duration * buffer.sampleRate), buffer.sampleRate);
-  const source = offline.createBufferSource();
-  source.buffer = buffer;
-  const modulator = tuneSource(offline, source, v);
-  source.connect(makeGraph(offline, offline.destination, v));
-  source.start();
-  const rendered = await offline.startRendering();
-  if (modulator) modulator.stop();
-  return encodeWav(rendered);
-}
-function downloadWav(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${filename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').slice(0, 100)}.wav`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-}
-async function exportWav() {
-  if (!state.buffer || state.exporting) return;
-  state.exporting = true;
-  updateBuilder();
-  setStatus('正在生成 WAV…');
-  const name = $('fileName').textContent.replace(/\.[^.]+$/, '');
-  try {
-    const blob = await renderVoice(state.buffer, values());
-    downloadWav(blob, `${name}-变声`);
-    setStatus('处理录音已导出');
-  } catch { setStatus('导出失败，请重试'); }
-  finally { state.exporting = false; updateBuilder(); }
-}
-function encodeWav(buffer){ const channels=buffer.numberOfChannels, length=buffer.length*channels*2+44, out=new ArrayBuffer(length), view=new DataView(out); const write=(o,s)=>[...s].forEach((c,i)=>view.setUint8(o+i,c.charCodeAt(0))); write(0,'RIFF');view.setUint32(4,36+buffer.length*channels*2,true);write(8,'WAVE');write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,buffer.sampleRate,true);view.setUint32(28,buffer.sampleRate*channels*2,true);view.setUint16(32,channels*2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,buffer.length*channels*2,true); let pos=44; for(let i=0;i<buffer.length;i++)for(let c=0;c<channels;c++){let x=Math.max(-1,Math.min(1,buffer.getChannelData(c)[i]));view.setInt16(pos,x<0?x*0x8000:x*0x7fff,true);pos+=2;} return new Blob([out],{type:'audio/wav'}); }
-
-function boundedSettings(settings = {}) {
-  return Object.fromEntries(controls.map(id => {
-    const value = Number(settings[id]);
-    return [id, Math.max(Number($(id).min), Math.min(Number($(id).max), Number.isFinite(value) ? value : 0))];
-  }));
-}
-function refreshIcons() {
-  if (window.lucide) window.lucide.createIcons();
-}
 function setMessage(id, text, error = false) {
-  $(id).textContent = text;
-  $(id).classList.toggle('error', error);
+  const node = $(id);
+  node.textContent = text;
+  node.classList.toggle('error', Boolean(error));
 }
-function updateBuilder() {
-  $('exportBtn').disabled = !state.buffer || state.loading || state.exporting;
-  $('playBtn').disabled = !state.buffer || state.loading || state.recording;
-  const hasReference = Boolean(state.reference || state.activeProfile?.reference);
-  $('createVoiceBtn').disabled = !hasReference || !state.voices.length || state.loading || state.saving || state.recording || !$('voiceName').value.trim();
-  $('voiceName').disabled = state.saving;
-  $('baseVoice').disabled = state.saving || !state.voices.length;
-  $('fileInput').disabled = state.saving || state.recording;
-  $('recordBtn').disabled = state.saving || state.loading;
-  $('presetSelect').disabled = state.saving;
-  $('resetBtn').disabled = state.saving;
-  controls.forEach(id => $(id).disabled = state.saving);
-  document.querySelectorAll('.preset, .saved-voice button').forEach(button => button.disabled = state.saving);
-  const updating = state.activeProfile && $('voiceName').value.trim() === state.activeProfile.name;
-  $('createVoiceLabel').textContent = state.saving ? '正在建立音色…' : updating ? '更新音色' : '生成新音色';
-  const validVoice = state.activeProfile && state.voices.some(voice => voice.name === state.activeProfile.baseVoice);
-  $('generateSpeechBtn').disabled = !validVoice || !$('speechText').value.trim() || state.generating || state.saving;
-  $('generateSpeechLabel').textContent = state.generating ? '正在生成朗读…' : '生成朗读';
-  $('speechCount').textContent = `${$('speechText').value.length} / 12000`;
+function refreshIcons() { if (window.lucide) window.lucide.createIcons(); }
+function readStored(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; }
 }
-function settingsChanged() {
-  if (state.activeProfile) setMessage('voiceBuildStatus', '参数已修改，更新音色后用于下一次朗读');
-  else if (state.reference) setMessage('voiceBuildStatus', '音色参考已就绪');
-  if (state.playing) { stop(true); play(); }
-  updateBuilder();
+function store(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 忽略隐私模式 */ }
 }
+function values() {
+  return Object.fromEntries(CONTROL_IDS.map(id => [id, Number($(id).value)]));
+}
+function selectedStyle() { return $('presetSelect').value || 'custom'; }
 
-function estimatePitch(samples, sampleRate) {
-  const pitches = [];
-  const size = 2048;
-  const stride = Math.max(size, Math.floor(samples.length / 16));
-  for (let start = 0; start + size <= samples.length; start += stride) {
-    let energy = 0, mean = 0;
-    for (let i = 0; i < size; i++) mean += samples[start + i] / size;
-    for (let i = 0; i < size; i++) energy += (samples[start + i] - mean) ** 2;
-    if (energy / size < .00002) continue;
-    const correlations = [];
-    const minLag = Math.floor(sampleRate / 400), maxLag = Math.ceil(sampleRate / 65);
-    for (let lag = minLag; lag <= maxLag; lag++) {
-      let sum = 0, a = 0, b = 0;
-      for (let i = 0; i < size - lag; i += 2) {
-        const x = samples[start + i] - mean, y = samples[start + i + lag] - mean;
-        sum += x * y; a += x * x; b += y * y;
-      }
-      correlations[lag] = sum / Math.sqrt(Math.max(1e-12, a * b));
-    }
-    const best = Math.max(...correlations.slice(minLag));
-    for (let lag = minLag + 1; lag < maxLag; lag++) {
-      if (correlations[lag] > Math.max(.72, best * .93) &&
-          correlations[lag] >= correlations[lag - 1] && correlations[lag] > correlations[lag + 1]) {
-        pitches.push(sampleRate / lag);
-        break;
-      }
-    }
-  }
-  pitches.sort((a, b) => a - b);
-  return pitches.length >= 2 ? pitches[Math.floor(pitches.length / 2)] : 0;
-}
-
-async function voiceFeatures(buffer) {
-  const sampleRate = 16000, duration = Math.min(15, buffer.duration);
-  const offline = new OfflineAudioContext(4, Math.max(1, Math.ceil(duration * sampleRate)), sampleRate);
-  const source = offline.createBufferSource(), mono = offline.createGain(), merger = offline.createChannelMerger(4);
-  source.buffer = buffer;
-  mono.channelCount = 1;
-  mono.channelCountMode = 'explicit';
-  source.connect(mono);
-  [180, 1100, 4200].forEach((frequency, index) => {
-    const filter = offline.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = frequency;
-    filter.Q.value = .8;
-    mono.connect(filter).connect(merger, 0, index);
-  });
-  mono.connect(merger, 0, 3);
-  merger.connect(offline.destination);
-  source.start(0, Math.max(0, (buffer.duration - duration) / 2), duration);
-  const rendered = await offline.startRendering();
-  const energy = [0, 1, 2, 3].map(channel => {
-    const data = rendered.getChannelData(channel);
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
-    return Math.sqrt(sum / Math.max(1, data.length));
-  });
-  const total = Math.max(.00001, energy[0] + energy[1] + energy[2]);
-  return {
-    low: energy[0] / total, mid: energy[1] / total, high: energy[2] / total,
-    level: energy[3], pitch: estimatePitch(rendered.getChannelData(3), sampleRate)
-  };
-}
-
-function matchedSettings(target, base, adjustments) {
-  const limit = (value, min, max) => Math.max(min, Math.min(max, value));
-  const difference = key => limit(20 * Math.log10(Math.max(.01, target[key]) / Math.max(.01, base[key])), -9, 9);
-  const matching = {
-    ...presets.clean,
-    brightness: difference('high') / .23,
-    warmth: difference('low') / .18,
-    presence: difference('mid') / .12,
-    resonance: limit(((target.high - target.low) - (base.high - base.low)) * 100, -35, 35),
-    pitch: target.pitch && base.pitch ? limit(12 * Math.log2(target.pitch / base.pitch), -7, 7) : 0
-  };
-  return boundedSettings(Object.fromEntries(controls.map(id => [id, matching[id] + adjustments[id]])));
-}
-
-async function requestSpeech(text, voice) {
-  const response = await fetch('/api/tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice }),
-    signal: AbortSignal.timeout(120000)
-  });
+async function api(path, options = {}) {
+  const response = await fetch(path, options);
   if (!response.ok) {
-    const failure = await response.json().catch(() => ({}));
-    throw new Error(failure.error || '本机语音合成失败，请重试');
+    let message = `请求失败（${response.status}）`;
+    try {
+      const data = await response.json();
+      if (data?.error) message = data.error;
+    } catch { /* 非 JSON 响应 */ }
+    throw new Error(message);
   }
-  const blob = await response.blob();
-  if (blob.size < 44) throw new Error('语音服务没有返回有效音频');
-  return audioContext().decodeAudioData(await blob.arrayBuffer());
+  return response;
 }
+const apiJson = (path, options) => api(path, options).then(r => r.json());
 
-async function loadLocalVoices() {
-  const request = ++state.voiceRequest;
-  $('retryVoices').disabled = true;
-  $('voiceServiceStatus').textContent = '正在检查本机语音服务…';
+/* ------------------------------------------------------------- 引擎状态 */
+async function loadStatus(silent = false) {
   try {
-    const response = await fetch('/api/voices', { cache: 'no-store', signal: AbortSignal.timeout(20000) });
-    if (!response.ok) throw new Error('本机语音服务未响应');
-    const data = await response.json();
-    const voices = Array.isArray(data.voices) ? data.voices.filter(voice => typeof voice.name === 'string' && voice.name) : [];
-    if (!voices.length) throw new Error('没有找到可用的本机语音包');
-    if (request !== state.voiceRequest) return;
-    const previous = $('baseVoice').value;
-    state.voices = voices;
-    $('baseVoice').replaceChildren(...voices.map(voice => new Option(voice.name, voice.name)));
-    const preferred = [state.activeProfile?.baseVoice, previous, voices.find(voice => /Huihui|Chinese|中文|zh/i.test(`${voice.name} ${voice.language}`))?.name];
-    $('baseVoice').value = preferred.find(name => voices.some(voice => voice.name === name)) || voices[0].name;
-    $('baseVoice').disabled = false;
-    $('voiceServiceStatus').textContent = `本机语音可用 · ${voices.length} 个基础声线`;
-  } catch (error) {
-    if (request !== state.voiceRequest) return;
-    state.voices = [];
-    $('baseVoice').replaceChildren(new Option('本机语音不可用', ''));
-    $('baseVoice').disabled = true;
-    $('voiceServiceStatus').textContent = location.protocol === 'file:'
-      ? '请通过“启动声线实验室.bat”打开页面'
-      : `${error.message || '无法连接本机语音'}，请启动本地服务后重试`;
-  } finally {
-    if (request === state.voiceRequest) {
-      $('retryVoices').disabled = false;
-      updateBuilder();
+    const data = await apiJson('/api/status');
+    state.status = data;
+    const ai = data.ai || {};
+    const engine = data.engine;
+    $('engineBadge').textContent = engine === 'ai' ? 'AI 克隆' : engine === 'fallback' ? '本机朗读' : '不可用';
+    $('engineBadge').dataset.kind = engine;
+    const device = data.device || {};
+    const hardware = device.cuda
+      ? `GPU ${device.gpu || 'CUDA'}${device.vram_gb ? ` · ${device.vram_gb}GB` : ''}`
+      : `CPU${device.gpu ? `（未检测到可用 CUDA）` : ''}`;
+    if (engine === 'ai') {
+      $('engineStatus').textContent = `${ai.detail}｜${hardware}｜${data.settings?.num_step || 16} 步`;
+      $('builderBadge').textContent = 'AI 声音克隆';
+      if (!silent) setStatus(`就绪 · ${hardware}`);
+    } else if (engine === 'fallback') {
+      $('engineStatus').textContent = `未启用 AI 克隆：${ai.detail || '缺少模型'}（当前只能用 Windows 本机朗读 + 音色处理）`;
+      $('builderBadge').textContent = '轻量模式';
+      if (!silent) setStatus('轻量模式：建议安装 AI 克隆引擎');
+    } else {
+      $('engineStatus').textContent = data.detail || '没有可用的语音引擎';
+      $('builderBadge').textContent = '引擎不可用';
     }
+    // 没装 AI 引擎时，直接给一个“一键安装”面板（后台跑 tools/setup_ai.py）
+    const install = data.install || {};
+    const showInstall = engine !== 'ai';
+    $('installPanel').hidden = !showInstall;
+    if (showInstall) {
+      if (install.running) {
+        $('installBtn').disabled = true;
+        $('installBtn').querySelector('span').textContent = '正在安装…';
+        pollInstall();
+      } else if (install.done) {
+        $('installDetail').textContent = '安装完成，正在重新检测引擎…';
+      } else if (install.error) {
+        $('installDetail').textContent = `上次安装失败：${install.error}。也可以手动双击“安装AI克隆引擎.bat”。`;
+      } else {
+        $('installBtn').disabled = false;
+        $('installBtn').querySelector('span').textContent = '一键安装到本机';
+      }
+    }
+    const stt = data.transcription || {};
+    $('transcribeBtn').disabled = !stt.available;
+    $('transcribeBtn').title = stt.available ? '用本机语音识别自动填写参考文字' : (stt.detail || '未安装语音识别模型，请手动填写');
+    updateButtons();
+  } catch (error) {
+    $('engineStatus').textContent = `无法连接本机服务：${error.message}。请先运行“启动声线实验室.bat”。`;
+    $('engineBadge').textContent = '服务未启动';
+    setStatus('本机服务未连接', 'error');
   }
 }
 
-function clearSpeechResult() {
-  state.speechVersion++;
-  $('speechAudio').pause();
-  $('speechAudio').removeAttribute('src');
-  $('speechAudio').load();
-  if (state.speechUrl) URL.revokeObjectURL(state.speechUrl);
-  state.speechUrl = null;
-  state.speechBlob = null;
-  $('speechResult').hidden = true;
+/* ------------------------------------------------------- 一键安装 AI 引擎 */
+function renderInstallLog(lines) {
+  const node = $('installLog');
+  if (!lines || !lines.length) return;
+  node.hidden = false;
+  node.textContent = lines.slice(-14).join('\n');
+  node.scrollTop = node.scrollHeight;
 }
-function saveProfiles(profiles) {
-  localStorage.setItem('voiceLabProfiles', JSON.stringify(profiles));
-  state.profiles = profiles;
+
+async function pollInstall() {
+  if (state.installTimer) return;
+  const tick = async () => {
+    try {
+      const data = await apiJson('/api/install/status');
+      state.installTimer = null;
+      if (data.log) renderInstallLog(data.log);
+      if (data.running) {
+        $('installDetail').textContent = '正在安装，请保持网络畅通，不要关闭这个页面…';
+        state.installTimer = setTimeout(tick, 2500);
+        return;
+      }
+      $('installBtn').disabled = false;
+      $('installBtn').querySelector('span').textContent = '一键安装到本机';
+      if (data.done) {
+        $('installDetail').textContent = '安装完成，正在重新检测引擎…';
+        await loadStatus(true);
+        setStatus('AI 克隆引擎已安装，可以建立音色了');
+      } else if (data.error) {
+        $('installDetail').textContent = `安装失败：${data.error}。可以改用“安装AI克隆引擎.bat”，或加参数 --mirror 重试。`;
+        setStatus('安装失败', 'error');
+      }
+    } catch (error) {
+      state.installTimer = null;
+      setStatus(`无法查询安装进度：${error.message}`, 'error');
+    }
+  };
+  state.installTimer = setTimeout(tick, 1200);
 }
-function activateProfile(profile, restoreControls = true) {
-  state.activeProfile = profile;
-  clearSpeechResult();
-  if (restoreControls) {
-    stop();
-    state.offset = 0;
-    state.reference = null;
-    updateProgress(0);
-    $('referenceStatus').textContent = state.buffer
-      ? '当前录音保留用于试听，音色参考沿用已保存的音色'
-      : '已载入保存的音色参考，可直接生成文字朗读';
-    controls.forEach(id => $(id).value = profile.values[id]);
-    $('presetSelect').value = 'custom';
-    document.querySelectorAll('.preset').forEach(button => button.classList.remove('active'));
-    $('voiceName').value = profile.name;
-    if (state.voices.some(voice => voice.name === profile.baseVoice)) $('baseVoice').value = profile.baseVoice;
-    updateLabels();
-    persistSettings('custom');
+
+async function startInstall() {
+  $('installBtn').disabled = true;
+  $('installBtn').querySelector('span').textContent = '正在安装…';
+  $('installLog').hidden = false;
+  $('installLog').textContent = '开始安装…';
+  setStatus('正在安装 AI 克隆引擎…');
+  try {
+    await apiJson('/api/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mirror: $('installMirror').checked, cpu: $('installCpu').checked })
+    });
+    await pollInstall();
+  } catch (error) {
+    $('installDetail').textContent = `无法启动安装：${error.message}。请手动双击“安装AI克隆引擎.bat”。`;
+    $('installBtn').disabled = false;
+    setStatus('安装未启动', 'error');
   }
-  try { localStorage.setItem('voiceLabActiveProfile', JSON.stringify(profile.id)); } catch {}
-  $('speechEditor').hidden = false;
-  $('activeVoiceName').textContent = profile.name;
-  setMessage('speechStatus', '音色已就绪');
-  setMessage('voiceBuildStatus', `已保存音色：${profile.name}`);
-  renderProfiles();
-  updateBuilder();
 }
-function renderProfiles() {
-  const list = $('savedVoices');
+
+/* --------------------------------------------------------------- 音色列表 */
+async function loadClones() {
+  try {
+    const data = await apiJson('/api/clones');
+    state.clones = Array.isArray(data.clones) ? data.clones : [];
+    const activeId = readStored('voiceActiveClone', null);
+    if (state.activeClone && !state.clones.some(item => item.id === state.activeClone.id)) state.activeClone = null;
+    if (!state.activeClone && activeId) {
+      const found = state.clones.find(item => item.id === activeId);
+      if (found) selectClone(found, { silent: true });
+    }
+    renderClones();
+  } catch (error) {
+    $('cloneList').innerHTML = `<p class="saved-empty error-text">${error.message}</p>`;
+  }
+}
+
+function renderClones() {
+  const list = $('cloneList');
   list.replaceChildren();
-  if (!state.profiles.length) {
+  if (!state.clones.length) {
     const empty = document.createElement('p');
     empty.className = 'saved-empty';
-    empty.textContent = '尚未保存音色';
+    empty.textContent = '还没有克隆音色，导入一段声音即可建立';
     list.append(empty);
+    updateButtons();
+    return;
   }
-  state.profiles.forEach(profile => {
+  state.clones.forEach(clone => {
     const row = document.createElement('div');
-    row.className = `saved-voice${profile.id === state.activeProfile?.id ? ' active' : ''}`;
+    row.className = `saved-voice${clone.id === state.activeClone?.id ? ' active' : ''}`;
     const select = document.createElement('button');
     select.type = 'button';
     select.className = 'saved-voice-select';
+    select.title = `使用音色：${clone.name}`;
     const icon = document.createElement('i');
-    icon.dataset.lucide = 'audio-lines';
+    icon.dataset.lucide = 'mic';
     icon.setAttribute('aria-hidden', 'true');
-    const labels = document.createElement('span'), name = document.createElement('b'), source = document.createElement('small');
-    name.textContent = profile.name;
-    source.textContent = profile.reference.name;
+    const labels = document.createElement('span');
+    const name = document.createElement('b');
+    name.textContent = clone.name;
+    const source = document.createElement('small');
+    source.textContent = `${clone.seconds || 0}s 参考 · ${(clone.text || '').slice(0, 18) || '无文字'}`;
     labels.append(name, source);
     select.append(icon, labels);
-    select.addEventListener('click', () => { activateProfile(profile); $('speechEditor').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    select.addEventListener('click', () => selectClone(clone));
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'icon-btn';
-    remove.title = `删除音色：${profile.name}`;
+    remove.title = `删除音色：${clone.name}`;
     remove.setAttribute('aria-label', remove.title);
     const trash = document.createElement('i');
     trash.dataset.lucide = 'trash-2';
     trash.setAttribute('aria-hidden', 'true');
     remove.append(trash);
-    remove.addEventListener('click', () => {
+    remove.addEventListener('click', async event => {
+      event.stopPropagation();
+      if (!confirm(`删除音色“${clone.name}”？参考音频会一起删除。`)) return;
       try {
-        saveProfiles(state.profiles.filter(item => item.id !== profile.id));
-        if (state.activeProfile?.id === profile.id) {
-          state.activeProfile = null;
-          clearSpeechResult();
+        await api(`/api/clones/${clone.id}`, { method: 'DELETE' });
+        if (state.activeClone?.id === clone.id) {
+          state.activeClone = null;
+          store('voiceActiveClone', null);
           $('speechEditor').hidden = true;
-          localStorage.removeItem('voiceLabActiveProfile');
-          setMessage('voiceBuildStatus', '音色已删除');
         }
-        renderProfiles();
-        updateBuilder();
-      } catch { setStatus('无法保存删除结果，请检查浏览器存储'); }
+        await loadClones();
+        setStatus('音色已删除');
+      } catch (error) { setStatus(error.message, 'error'); }
     });
     row.append(select, remove);
     list.append(row);
   });
   refreshIcons();
+  updateButtons();
 }
 
-async function createVoice() {
-  const reference = state.reference || state.activeProfile?.reference;
-  const name = $('voiceName').value.trim(), baseVoice = $('baseVoice').value;
-  if (!reference || !name || !baseVoice || state.saving || state.loading || state.recording) return;
-  const adjustments = values();
-  const updating = state.activeProfile?.name === name;
-  const existingId = updating ? state.activeProfile.id : null;
-  const existingBase = state.activeProfile?.baseVoice === baseVoice ? state.activeProfile.baseFeatures : null;
-  state.saving = true;
-  updateBuilder();
-  setMessage('voiceBuildStatus', '正在建立参考音色与朗读声线的匹配…');
+function selectClone(clone, { silent = false } = {}) {
+  state.activeClone = clone;
+  store('voiceActiveClone', clone.id);
+  $('speechEditor').hidden = false;
+  $('activeCloneName').textContent = clone.name;
+  $('cloneName').value = clone.name;
+  $('cloneText').value = clone.text || '';
+  setMessage('cloneStatus', `正在使用克隆音色：${clone.name}`);
+  setMessage('speechStatus', `已切换音色：${clone.name}，输入文字后即可朗读`);
+  renderClones();
+  updateButtons();
+  if (!silent) {
+    setStatus(`当前音色：${clone.name}`);
+    $('speechEditor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('speechText').focus({ preventScroll: true });
+  }
+}
+
+/* ------------------------------------------------------------ 导入与选段 */
+function clearAnalysis() {
+  state.analysis = null;
+  state.selected = null;
+  state.buffer = null;
+  if (state.originalUrl) URL.revokeObjectURL(state.originalUrl);
+  state.originalUrl = null;
+  $('fileName').textContent = '还没有音频';
+  $('duration').textContent = $('totalTime').textContent = '00:00';
+  $('segmentBar').hidden = true;
+  $('segmentChips').replaceChildren();
+  $('waveSegments').replaceChildren();
+  $('playBestBtn').disabled = true;
+  $('referenceStatus').textContent = '导入一段 3–10 秒的清晰人声，或者直接导入整段视频，程序会自动挑出最适合克隆的片段';
+  stopVoice();
+  drawWave();
+  updateButtons();
+}
+
+async function handleFile(file) {
+  if (!file) return;
+  if (file.size > 200 * 1024 * 1024) { setStatus('文件超过 200 MB，请先裁剪', 'error'); return; }
+  stopAll();
+  clearAnalysis();
+  $('fileName').textContent = file.name;
+  $('referenceStatus').textContent = '正在本机解码并挑选最适合克隆的片段…';
+  setMessage('cloneStatus', '正在分析音频…');
+  setStatus('正在分析音频…');
+  state.busy = true;
+  updateButtons();
   try {
-    let baseFeatures = existingBase;
-    if (!baseFeatures) {
-      const chinese = /Huihui|Chinese|中文|zh/i.test(`${baseVoice} ${state.voices.find(voice => voice.name === baseVoice)?.language}`);
-      const sample = chinese ? '你好，欢迎来到声线实验室。今天阳光很好，让我们用新的声音，讲述一个温暖而有趣的故事。' : 'Hello and welcome to Voice Lab. Today is a beautiful day. Let us tell a warm and interesting story with a new voice.';
-      baseFeatures = await voiceFeatures(await requestSpeech(sample, baseVoice));
+    // 1) 本地解码：用于画波形 + 试听原始录音
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      state.buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+      await ctx.close();
+      state.originalUrl = URL.createObjectURL(file);
+      $('duration').textContent = $('totalTime').textContent = fmt(state.buffer.duration);
+      drawWave();
+    } catch { /* 有些容器浏览器解不开，但服务端的 ffmpeg 可以 */ }
+
+    // 2) 服务端分析：选段 + 自动转写
+    const data = await apiJson('/api/clone/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+      body: file
+    });
+    applyAnalysis(data);
+    setStatus('分析完成，确认文字后建立音色');
+  } catch (error) {
+    $('referenceStatus').textContent = `分析失败：${error.message}`;
+    setMessage('cloneStatus', error.message, true);
+    setStatus('分析失败', 'error');
+  } finally {
+    state.busy = false;
+    updateButtons();
+  }
+}
+
+function applyAnalysis(data) {
+  state.analysis = data;
+  state.selected = data.best ? { start: data.best.start, stop: data.best.stop } : null;
+  $('duration').textContent = fmt(data.duration);
+  $('totalTime').textContent = fmt(data.duration);
+  const best = data.best || {};
+  $('referenceStatus').textContent = best.start !== undefined
+    ? `已自动挑选 ${fmt(best.start)} – ${fmt(best.stop)}（${(best.stop - best.start).toFixed(1)} 秒，匹配度 ${best.score}）`
+    : '已导入音频';
+  if (!$('cloneName').value.trim()) $('cloneName').value = data.suggestedName || '我的克隆音色';
+  $('cloneText').value = data.text || '';
+  if (data.text) setMessage('cloneStatus', '已自动识别参考文字，确认无误后建立音色');
+  else if (data.textError) setMessage('cloneStatus', `自动识别不可用（${data.textError}），请手动填写片段里说的那句话`, true);
+  else setMessage('cloneStatus', '请填写参考片段里说的那句话，越准确克隆越像');
+  renderSegments();
+  drawWave();
+  updateButtons();
+}
+
+function renderSegments() {
+  const chips = $('segmentChips');
+  chips.replaceChildren();
+  const segments = state.analysis?.segments || [];
+  $('segmentBar').hidden = !segments.length;
+  segments.slice(0, 24).forEach((segment, index) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    const chosen = state.selected && Math.abs(segment.start - state.selected.start) < 0.02;
+    chip.className = `segment-chip${chosen ? ' active' : ''}`;
+    chip.innerHTML = `<b>${fmt(segment.start)} – ${fmt(segment.stop)}</b><small>${(segment.stop - segment.start).toFixed(1)}s · ${segment.score}分</small>`;
+    chip.title = `音高 ${segment.detail?.f0 || '?'}Hz · 音量 ${segment.detail?.level ?? '?'} · 点击选用`;
+    chip.addEventListener('click', () => {
+      state.selected = { start: segment.start, stop: segment.stop };
+      renderSegments();
+      drawWave();
+      $('referenceStatus').textContent = `已选择 ${fmt(segment.start)} – ${fmt(segment.stop)}（推荐片段排在最前）`;
+      setMessage('cloneStatus', '片段已更换，参考文字要改成这段里说的内容');
+    });
+    chips.append(chip);
+    if (index === 0 && state.selected) chip.scrollIntoView({ block: 'nearest' });
+  });
+  renderWaveSegments();
+}
+
+function renderWaveSegments() {
+  const layer = $('waveSegments');
+  layer.replaceChildren();
+  const total = state.analysis?.duration || state.buffer?.duration || 0;
+  if (!total || !state.analysis?.segments) return;
+  state.analysis.segments.slice(0, 40).forEach(segment => {
+    const band = document.createElement('div');
+    band.className = 'wave-segment';
+    band.style.left = `${(segment.start / total) * 100}%`;
+    band.style.width = `${Math.max(0.4, ((segment.stop - segment.start) / total) * 100)}%`;
+    band.title = `${fmt(segment.start)} – ${fmt(segment.stop)}`;
+    if (state.selected && Math.abs(segment.start - state.selected.start) < 0.02) band.classList.add('active');
+    band.addEventListener('click', () => {
+      state.selected = { start: segment.start, stop: segment.stop };
+      renderSegments();
+      drawWave();
+    });
+    layer.append(band);
+  });
+}
+
+function drawWave() {
+  const canvas = $('waveform');
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#f7f9fa';
+  ctx.fillRect(0, 0, width, height);
+  if (!state.buffer) {
+    $('emptyWave').style.display = 'flex';
+    return;
+  }
+  $('emptyWave').style.display = 'none';
+  const data = state.buffer.getChannelData(0);
+  const step = Math.ceil(data.length / width);
+  const amp = height * 0.4;
+  ctx.beginPath();
+  ctx.strokeStyle = '#72a7a2';
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < width; i += 1) {
+    let min = 1;
+    let max = -1;
+    for (let j = 0; j < step; j += 1) {
+      const v = data[i * step + j] || 0;
+      if (v < min) min = v;
+      if (v > max) max = v;
     }
-    const profile = {
-      id: existingId || crypto.randomUUID(), name, baseVoice,
-      reference, baseFeatures, values: adjustments,
-      settings: matchedSettings(reference.features, baseFeatures, adjustments),
-      updatedAt: new Date().toISOString()
+    ctx.moveTo(i, height / 2 + min * amp);
+    ctx.lineTo(i, height / 2 + max * amp);
+  }
+  ctx.stroke();
+  // 高亮选中的片段
+  const total = state.buffer.duration;
+  if (state.selected && total) {
+    const x1 = (state.selected.start / total) * width;
+    const x2 = (state.selected.stop / total) * width;
+    ctx.fillStyle = 'rgba(78,150,145,.16)';
+    ctx.fillRect(x1, 0, Math.max(2, x2 - x1), height);
+    ctx.strokeStyle = 'rgba(78,150,145,.75)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x1, 0); ctx.lineTo(x1, height);
+    ctx.moveTo(x2, 0); ctx.lineTo(x2, height);
+    ctx.stroke();
+  }
+  renderWaveSegments();
+}
+
+/* ------------------------------------------------------------------ 试听 */
+function ensureAudio() {
+  if (!state.audio) {
+    state.audio = new Audio();
+    state.audio.addEventListener('timeupdate', () => {
+      if (!state.buffer) return;
+      const ratio = Math.min(1, state.audio.currentTime / (state.buffer.duration || 1));
+      $('progressFill').style.width = `${ratio * 100}%`;
+      $('playhead').style.left = `${ratio * 100}%`;
+      $('currentTime').textContent = fmt(state.audio.currentTime);
+    });
+    state.audio.addEventListener('ended', () => {
+      state.playingOriginal = false;
+      state.playingSegment = false;
+      $('playBtn').textContent = '▶';
+      setStatus('试听结束');
+    });
+    state.audio.addEventListener('pause', () => { state.playingOriginal = false; $('playBtn').textContent = '▶'; });
+  }
+  return state.audio;
+}
+
+function stopVoice() {
+  if (state.audio) {
+    state.audio.pause();
+    state.audio.removeAttribute('src');
+    state.audio.load();
+  }
+  state.playingOriginal = false;
+  state.playingSegment = false;
+  $('playBtn').textContent = '▶';
+}
+
+function stopAll() {
+  stopVoice();
+  const result = $('speechAudio');
+  if (result && !result.paused) result.pause();
+}
+
+function playOriginal() {
+  if (!state.originalUrl) { setStatus('这段格式浏览器不能直接试听，可以直接建立音色', 'error'); return; }
+  const audio = ensureAudio();
+  if (state.playingOriginal) { audio.pause(); return; }
+  audio.pause();
+  audio.src = state.originalUrl;
+  audio.currentTime = 0;
+  state.playingOriginal = true;
+  state.playingSegment = false;
+  audio.play().then(() => {
+    $('playBtn').textContent = 'Ⅱ';
+    setStatus('正在试听原始录音');
+  }).catch(() => setStatus('浏览器无法播放这个格式', 'error'));
+}
+
+function playSegment() {
+  if (!state.selected) { setStatus('先选择一个片段'); return; }
+  if (!state.originalUrl) { setStatus('这段格式浏览器不能直接试听，可以直接建立音色', 'error'); return; }
+  const audio = ensureAudio();
+  audio.pause();
+  audio.src = state.originalUrl;
+  audio.currentTime = state.selected.start;
+  state.playingSegment = true;
+  state.playingOriginal = false;
+  audio.play().then(() => {
+    $('playBtn').textContent = 'Ⅱ';
+    const stopAt = state.selected.stop;
+    const watcher = () => {
+      if (audio.currentTime >= stopAt) {
+        audio.pause();
+        audio.removeEventListener('timeupdate', watcher);
+      }
     };
-    const profiles = state.profiles.filter(item => item.id !== profile.id);
-    if (profiles.length >= 50) throw new Error('最多保存 50 个音色，请先删除不需要的音色');
-    saveProfiles([profile, ...profiles]);
-    activateProfile(profile, false);
-    setStatus(updating ? '音色已更新' : '新音色已生成');
+    audio.addEventListener('timeupdate', watcher);
+    setStatus(`正在试听片段 ${fmt(state.selected.start)} – ${fmt(state.selected.stop)}`);
+  }).catch(() => setStatus('浏览器无法播放这个格式', 'error'));
+}
+
+/* --------------------------------------------------------------- 建立音色 */
+async function transcribeNow() {
+  const analysis = state.analysis;
+  if (!analysis?.token) { setStatus('先导入音频', 'error'); return; }
+  $('transcribeBtn').disabled = true;
+  const original = $('transcribeBtn').textContent;
+  $('transcribeBtn').textContent = '识别中…';
+  try {
+    const segment = state.selected || analysis.best || {};
+    const data = await apiJson('/api/clone/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: analysis.token,
+        filename: analysis.filename,
+        start: segment.start ?? 0,
+        stop: segment.stop ?? analysis.duration
+      })
+    });
+    $('cloneText').value = data.text || '';
+    setMessage('cloneStatus', data.text ? '识别完成，请核对文字与音频是否一致' : '没识别出文字，请手动填写');
+    updateButtons();
+  } catch (error) {
+    setMessage('cloneStatus', `识别失败：${error.message}`, true);
+  } finally {
+    $('transcribeBtn').textContent = original;
+    $('transcribeBtn').disabled = false;
+  }
+}
+
+async function createClone() {
+  const analysis = state.analysis;
+  const name = $('cloneName').value.trim();
+  const text = $('cloneText').value.trim();
+  if (!analysis?.token) { setStatus('先导入音频', 'error'); return; }
+  if (!name) { setMessage('cloneStatus', '给这个音色起个名字', true); $('cloneName').focus(); return; }
+  if (!text) {
+    setMessage('cloneStatus', '请填写参考音频说的那句话（可以先点“自动识别”）', true);
+    $('cloneText').focus();
+    return;
+  }
+  const segment = state.selected || analysis.best || {};
+  state.busy = true;
+  $('createCloneLabel').textContent = '正在建立…';
+  setMessage('cloneStatus', '正在保存参考音频并分析音色特征…');
+  updateButtons();
+  try {
+    const clone = await apiJson('/api/clones', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: analysis.token,
+        filename: analysis.filename,
+        name,
+        text,
+        start: segment.start,
+        stop: segment.stop,
+        autoText: false,
+        engine: state.status?.engine || ''
+      })
+    });
+    await loadClones();
+    selectClone(clone, { silent: true });
+    setMessage('cloneStatus', `音色“${clone.name}”已建立，可以在下面输入文字试听`);
+    setStatus('克隆音色已建立');
     $('speechEditor').scrollIntoView({ behavior: 'smooth', block: 'start' });
     $('speechText').focus({ preventScroll: true });
   } catch (error) {
-    setMessage('voiceBuildStatus', error.message || '音色生成失败，请重试', true);
-    setStatus('音色未保存');
-  } finally { state.saving = false; updateBuilder(); }
+    setMessage('cloneStatus', error.message, true);
+    setStatus('音色建立失败', 'error');
+  } finally {
+    state.busy = false;
+    $('createCloneLabel').textContent = '建立克隆音色';
+    updateButtons();
+  }
+}
+
+/* --------------------------------------------------------------- 克隆朗读 */
+function settingsPayload() {
+  return { ...values(), style: selectedStyle(), engine: state.status?.engine };
+}
+
+/** 修掉进度条动画卡在 99% 的视觉问题：完成后停在使用者看得懂的位置 */
+function setJobProgress(progress, detail) {
+  $('jobProgress').hidden = false;
+  $('jobFill').style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+  $('jobDetail').textContent = detail || '合成中…';
+}
+
+async function synthesize(text) {
+  if (!state.activeClone) { setStatus('先选择一个克隆音色', 'error'); return null; }
+  if (!state.status?.available) {
+    setMessage('speechStatus', '还没有可用的合成引擎：请双击“安装AI克隆引擎.bat”安装后刷新页面。', true);
+    setStatus('引擎未就绪', 'error');
+    return null;
+  }
+  if (!text.trim()) { setStatus('请输入要朗读的文字', 'error'); return null; }
+  state.busy = true;
+  updateButtons();
+  setJobProgress(0.05, '正在准备…');
+  setMessage('speechStatus', `正在用“${state.activeClone.name}”朗读…`);
+  setStatus('克隆合成中…');
+  try {
+    const job = await apiJson('/api/tts/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, cloneId: state.activeClone.id, settings: settingsPayload() })
+    });
+    state.jobId = job.id;
+    return await waitJob(job.id);
+  } catch (error) {
+    setMessage('speechStatus', error.message, true);
+    setStatus('合成失败', 'error');
+    $('jobProgress').hidden = true;
+    return null;
+  } finally {
+    state.busy = false;
+    updateButtons();
+  }
+}
+
+function waitJob(jobId) {
+  return new Promise((resolve, reject) => {
+    const tick = async () => {
+      try {
+        const job = await apiJson(`/api/tts/jobs/${jobId}`);
+        setJobProgress(job.progress || 0, job.detail || '合成中…');
+        if (job.status === 'done') {
+          clearTimeout(state.jobTimer);
+          setJobProgress(1, `完成 · ${job.engine?.detail || ''}`);
+          const response = await api(`/api/tts/jobs/${jobId}/audio`);
+          const blob = await response.blob();
+          resolve(blob);
+          return;
+        }
+        if (job.status === 'error') {
+          clearTimeout(state.jobTimer);
+          $('jobProgress').hidden = true;
+          reject(new Error(job.detail || '合成失败'));
+          return;
+        }
+        state.jobTimer = setTimeout(tick, 700);
+      } catch (error) {
+        clearTimeout(state.jobTimer);
+        reject(error);
+      }
+    };
+    tick();
+  });
+}
+
+function showResult(blob, label) {
+  if (state.speechUrl) URL.revokeObjectURL(state.speechUrl);
+  state.speechBlob = blob;
+  state.speechUrl = URL.createObjectURL(blob);
+  const audio = $('speechAudio');
+  audio.src = state.speechUrl;
+  $('speechResult').hidden = false;
+  $('speechResultName').textContent = label;
+  setMessage('speechStatus', '朗读已生成，可以试听或导出 WAV');
+  setStatus('朗读已生成');
+  audio.play().catch(() => {});
 }
 
 async function generateSpeech() {
-  const profile = state.activeProfile, text = $('speechText').value.trim();
-  if (!profile || !text || state.generating || state.saving) return;
-  clearSpeechResult();
-  const version = state.speechVersion;
-  state.generating = true;
-  updateBuilder();
-  stop(true);
-  setMessage('speechStatus', `正在使用“${profile.name}”生成朗读…`);
-  setStatus('正在合成朗读…');
-  try {
-    const buffer = await requestSpeech(text, profile.baseVoice);
-    const blob = await renderVoice(buffer, profile.settings);
-    if (version !== state.speechVersion || state.activeProfile?.id !== profile.id) return;
-    state.speechBlob = blob;
-    state.speechUrl = URL.createObjectURL(blob);
-    $('speechAudio').src = state.speechUrl;
-    $('speechResultName').textContent = `${profile.name} · 朗读结果`;
-    $('speechResult').hidden = false;
-    setMessage('speechStatus', '朗读已生成，可以试听或导出 WAV');
-    setStatus('朗读已生成');
-    $('speechAudio').play().catch(() => {});
-  } catch (error) {
-    if (version !== state.speechVersion) return;
-    setMessage('speechStatus', error.message || '朗读生成失败，请重试', true);
-    setStatus('朗读生成失败');
-  } finally { state.generating = false; updateBuilder(); }
+  const text = $('speechText').value.trim();
+  const blob = await synthesize(text);
+  if (!blob) return;
+  showResult(blob, `${state.activeClone.name} · 朗读结果`);
 }
 
-$('fileInput').addEventListener('change', event => {
-  const file = event.target.files[0];
-  if (file) loadBlob(file, file.name);
-  event.target.value = '';
-});
-$('recordBtn').addEventListener('click', record);
-$('playBtn').addEventListener('click', play);
-$('resetBtn').addEventListener('click', () => applyPreset('clean'));
-$('exportBtn').addEventListener('click', exportWav);
-controls.forEach(id => {
-  $(id).setAttribute('aria-label', $(id).closest('.control-card').querySelector('b').textContent);
-  $(id).addEventListener('input', () => {
-    updateLabels();
-    $('presetSelect').value = 'custom';
-    document.querySelectorAll('.preset').forEach(button => button.classList.remove('active'));
-    persistSettings('custom');
-    settingsChanged();
-  });
-});
-document.querySelectorAll('.preset').forEach(button => button.addEventListener('click', () => applyPreset(button.dataset.preset)));
-$('presetSelect').addEventListener('change', event => event.target.value === 'custom' ? persistSettings('custom') : applyPreset(event.target.value));
-$('createVoiceBtn').addEventListener('click', createVoice);
-$('voiceName').addEventListener('input', updateBuilder);
-$('baseVoice').addEventListener('change', settingsChanged);
-$('retryVoices').addEventListener('click', loadLocalVoices);
-$('generateSpeechBtn').addEventListener('click', generateSpeech);
-$('speechText').addEventListener('input', () => {
-  clearSpeechResult();
-  setMessage('speechStatus', '文本已修改，等待生成朗读');
-  try { localStorage.setItem('voiceLabTextDraft', JSON.stringify($('speechText').value)); } catch {}
-  updateBuilder();
-});
-$('speechText').addEventListener('keydown', event => {
-  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !$('generateSpeechBtn').disabled) generateSpeech();
-});
-$('speechAudio').addEventListener('play', () => stop(true));
-$('exportSpeechBtn').addEventListener('click', () => {
-  if (state.speechBlob && state.activeProfile) {
-    downloadWav(state.speechBlob, `${state.activeProfile.name}-文字朗读`);
-    setStatus('朗读 WAV 已导出');
+async function previewSpeech() {
+  const text = $('speechText').value.trim() || '你好，这是用你的声音克隆出来的朗读效果，听起来自然吗？';
+  if (!$('speechText').value.trim()) $('speechText').value = text;
+  const blob = await synthesize(text.slice(0, 120));
+  if (!blob) return;
+  showResult(blob, `${state.activeClone.name} · 试听`);
+}
+
+/* ------------------------------------------------------------------ 按钮态 */
+function updateButtons() {
+  const hasAnalysis = Boolean(state.analysis?.token);
+  $('createCloneBtn').disabled = state.busy || !hasAnalysis;
+  $('transcribeBtn').disabled = state.busy || !hasAnalysis || !(state.status?.transcription?.available);
+  $('playBtn').disabled = !state.originalUrl;
+  $('playBestBtn').disabled = !state.originalUrl || !state.selected;
+  $('generateSpeechBtn').disabled = state.busy || !state.activeClone || !$('speechText').value.trim() || !state.status?.available;
+  $('previewBtn').disabled = state.busy || !state.activeClone;
+  $('generateSpeechLabel').textContent = state.busy ? '合成中…' : '生成朗读';
+  $('speechCount').textContent = `${$('speechText').value.length} / 12000`;
+  $('fileInput').disabled = state.busy || state.recording;
+  $('recordBtn').disabled = state.busy;
+  $('warmupBtn').disabled = state.busy || !(state.status?.ai?.available) || state.status?.engine !== 'ai';
+  $('releaseBtn').disabled = state.busy || state.status?.engine !== 'ai';
+}
+
+/* ---------------------------------------------------------------- 录音输入 */
+async function toggleRecord() {
+  if (state.recording) {
+    state.recorder.stop();
+    return;
   }
-});
-window.addEventListener('pagehide', () => {
-  stop();
-  if (state.recorder?.state === 'recording') state.recorder.stop();
-  if (state.speechUrl) URL.revokeObjectURL(state.speechUrl);
-});
-
-const saved = readStored('voiceLabSettings', null);
-if (saved?.values) {
-  const settings = boundedSettings(saved.values);
-  controls.forEach(id => $(id).value = settings[id]);
-  $('presetSelect').value = presets[saved.name] ? saved.name : 'custom';
-  document.querySelectorAll('.preset').forEach(button => button.classList.toggle('active', button.dataset.preset === saved.name));
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+    state.chunks = [];
+    state.recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    state.recorder.ondataavailable = event => { if (event.data.size) state.chunks.push(event.data); };
+    state.recorder.onstop = () => {
+      stream.getTracks().forEach(track => track.stop());
+      state.recording = false;
+      $('recordLabel').textContent = '麦克风录音';
+      $('recordBtn').classList.remove('recording');
+      const blob = new Blob(state.chunks, { type: state.recorder.mimeType || 'audio/webm' });
+      handleFile(new File([blob], `麦克风录音-${new Date().toLocaleTimeString().replace(/[:]/g, '')}.webm`, { type: blob.type }));
+    };
+    state.recorder.start();
+    state.recording = true;
+    $('recordLabel').textContent = '停止录音';
+    $('recordBtn').classList.add('recording');
+    setStatus('正在录音，请连续说一句完整的话…');
+  } catch {
+    setStatus('无法录音，请检查麦克风权限', 'error');
+  }
 }
-const storedProfiles = readStored('voiceLabProfiles', []);
-state.profiles = (Array.isArray(storedProfiles) ? storedProfiles : []).filter(profile =>
-  profile && typeof profile.id === 'string' && typeof profile.name === 'string' &&
-  typeof profile.baseVoice === 'string' && typeof profile.reference?.name === 'string' &&
-  ['low', 'mid', 'high', 'level', 'pitch'].every(key => Number.isFinite(profile.reference?.features?.[key])) &&
-  profile.values && profile.settings &&
-  ['low', 'mid', 'high', 'level', 'pitch'].every(key => Number.isFinite(profile.baseFeatures?.[key]))
-).map(profile => ({ ...profile, values: boundedSettings(profile.values), settings: boundedSettings(profile.settings) }));
-const draft = readStored('voiceLabTextDraft', '');
-$('speechText').value = typeof draft === 'string' ? draft.slice(0, 12000) : '';
-const activeId = readStored('voiceLabActiveProfile', null);
-const activeProfile = state.profiles.find(profile => profile.id === activeId);
-if (activeProfile) activateProfile(activeProfile);
-else renderProfiles();
+
+/* ------------------------------------------------------------------ 事件绑定 */
+function applyStyle(name) {
+  const preset = STYLES[name];
+  if (!preset) return;
+  CONTROL_IDS.forEach(id => { if (preset[id] !== undefined) $(id).value = preset[id]; });
+  $('presetSelect').value = name;
+  document.querySelectorAll('.style-list .preset').forEach(button => button.classList.toggle('active', button.dataset.style === name));
+  updateLabels();
+  store('voiceSettings', { style: name, values: values() });
+  if (state.activeClone) setMessage('speechStatus', `风格已切换到「${name === 'natural' ? '自然克隆' : $('presetSelect').selectedOptions[0].textContent}」，重新生成即可听到效果`);
+}
+
+function updateLabels() {
+  const v = values();
+  const signed = value => `${value > 0 ? '+' : ''}${value}`;
+  $('pitchValue').textContent = `${signed(v.pitch)} st`;
+  $('formantValue').textContent = signed(v.formant);
+  $('speedValue').textContent = `${signed(v.speed)}%`;
+  $('brightnessValue').textContent = signed(v.brightness);
+  $('warmthValue').textContent = signed(v.warmth);
+  $('presenceValue').textContent = signed(v.presence);
+  $('breathValue').textContent = `${v.breath}%`;
+  $('roomValue').textContent = `${v.room}%`;
+  $('deessValue').textContent = `${v.deess}%`;
+}
+
+function bind() {
+  $('fileInput').addEventListener('change', event => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) handleFile(file);
+  });
+  $('recordBtn').addEventListener('click', toggleRecord);
+  $('playBtn').addEventListener('click', playOriginal);
+  $('playBestBtn').addEventListener('click', playSegment);
+  $('clearBtn').addEventListener('click', () => { stopAll(); clearAnalysis(); setStatus('已清空'); });
+  $('createCloneBtn').addEventListener('click', createClone);
+  $('transcribeBtn').addEventListener('click', transcribeNow);
+  $('retryEngine').addEventListener('click', () => loadStatus());
+  $('warmupBtn').addEventListener('click', async () => {
+    $('warmupBtn').disabled = true;
+    setStatus('正在预载 AI 模型（4GB 显存约 20–40 秒）…');
+    try {
+      const data = await apiJson('/api/warmup', { method: 'POST' });
+      setStatus(data.ok ? '模型已预载，可以开始合成' : `预载失败：${data.error}`, data.ok ? '' : 'error');
+      await loadStatus(true);
+    } catch (error) { setStatus(error.message, 'error'); }
+    $('warmupBtn').disabled = false;
+  });
+  $('installBtn').addEventListener('click', startInstall);
+  $('releaseBtn').addEventListener('click', async () => {
+    $('releaseBtn').disabled = true;
+    try {
+      const data = await apiJson('/api/release', { method: 'POST' });
+      setStatus(data.released ? '已释放显存，下次合成会重新载入模型' : '模型当前未占用显存');
+      await loadStatus(true);
+    } catch (error) { setStatus(error.message, 'error'); }
+    $('releaseBtn').disabled = false;
+  });
+  $('generateSpeechBtn').addEventListener('click', generateSpeech);
+  $('previewBtn').addEventListener('click', previewSpeech);
+  $('reEditBtn').addEventListener('click', () => { $('speechResult').hidden = true; $('speechText').focus(); });
+  $('exportSpeechBtn').addEventListener('click', () => {
+    if (!state.speechBlob) return;
+    const url = URL.createObjectURL(state.speechBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${(state.activeClone?.name || '克隆朗读').replace(/[<>:"/\\|?*]/g, '-')}.wav`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    setStatus('已导出 WAV');
+  });
+  $('speechText').addEventListener('input', () => {
+    $('speechResult').hidden = true;
+    store('voiceTextDraft', $('speechText').value);
+    updateButtons();
+  });
+  $('speechText').addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !$('generateSpeechBtn').disabled) generateSpeech();
+  });
+  $('cloneText').addEventListener('input', updateButtons);
+  $('cloneName').addEventListener('input', updateButtons);
+  CONTROL_IDS.forEach(id => {
+    $(id).addEventListener('input', () => {
+      $('presetSelect').value = 'custom';
+      document.querySelectorAll('.style-list .preset').forEach(button => button.classList.remove('active'));
+      updateLabels();
+      store('voiceSettings', { style: 'custom', values: values() });
+      if (state.activeClone) setMessage('speechStatus', '参数已修改，重新生成即可听到效果');
+    });
+  });
+  document.querySelectorAll('.style-list .preset').forEach(button => {
+    button.addEventListener('click', () => applyStyle(button.dataset.style));
+  });
+  $('presetSelect').addEventListener('change', event => {
+    if (event.target.value === 'custom') {
+      store('voiceSettings', { style: 'custom', values: values() });
+      document.querySelectorAll('.style-list .preset').forEach(button => button.classList.remove('active'));
+    } else applyStyle(event.target.value);
+  });
+  window.addEventListener('pagehide', () => {
+    stopVoice();
+    if (state.recorder?.state === 'recording') state.recorder.stop();
+  });
+}
+
+/* -------------------------------------------------------------------- 启动 */
+function restoreSettings() {
+  const saved = readStored('voiceSettings', null);
+  if (saved?.values) {
+    CONTROL_IDS.forEach(id => {
+      const value = Number(saved.values[id]);
+      if (Number.isFinite(value)) $(id).value = value;
+    });
+    $('presetSelect').value = saved.style && (saved.style === 'custom' || STYLES[saved.style]) ? saved.style : 'custom';
+    document.querySelectorAll('.style-list .preset').forEach(button => {
+      button.classList.toggle('active', button.dataset.style === saved.style);
+    });
+  }
+  const draft = readStored('voiceTextDraft', '');
+  if (typeof draft === 'string') $('speechText').value = draft.slice(0, 12000);
+}
+
+bind();
+restoreSettings();
 updateLabels();
 drawWave();
-updateBuilder();
-loadLocalVoices();
+updateButtons();
+loadStatus();
+loadClones();
 refreshIcons();

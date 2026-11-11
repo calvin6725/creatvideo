@@ -1,0 +1,12 @@
+{
+  "engine": "auto",
+  "device": "auto",
+  "dtype": "fp32",
+  "max_duration": 12.0,
+  "retry_max_durations": [8.0, 5.0],
+  "zipvoice_model_name": "zipvoice_distill",
+  "prompt_min_seconds": 2.0,
+  "prompt_max_seconds": 8.0,
+  "asr": "auto",
+  "asr_model": "small"
+}

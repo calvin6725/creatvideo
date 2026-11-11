@@ -1,0 +1,9 @@
+# 运行本机服务 + 音频处理必需（其余全部是 Python 标准库）
+numpy>=1.24
+
+# 读取 mp3 / m4a / mp4 / webm 等压缩音频需要 ffmpeg（这个包自带二进制，不用另外装）
+imageio-ffmpeg>=0.4.9
+
+# 说明：AI 克隆引擎（torch / ZipVoice / vocos / 转写）不在这里，
+# 请通过“安装AI克隆引擎.bat”或 python tools/setup_ai.py 安装，
+# 见 requirements-ai.txt。

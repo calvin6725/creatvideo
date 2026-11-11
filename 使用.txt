@@ -1,12 +1,11 @@
+声线实验室（AI 声音克隆版）
 
+1) 第一次：双击“安装AI克隆引擎.bat”安装环境与模型（约 1GB，只需一次）
+2) 启动：双击“启动声线实验室.bat” → http://localhost:8000/
+3) 导入音频或整段视频 → 程序自动挑选最佳克隆片段 → 建立克隆音色 → 输入文字生成朗读
+4) 视频配音：双击“启动视频解说剪辑.bat” → “克隆音色生成解说”
 
-123
+手动启动服务：
+  .venv\Scripts\python.exe voice_server.py --port 8000
 
-打开项目中的 outputs 文件夹，在空白处按住 Shift 点击右键，选择“在此处打开 PowerShell”
-
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\voice_server.ps1 -Port 8000
-
-
-浏览器打开：
-http://localhost:8000/video.html
+详细说明见 使用说明.txt 与 README.md
