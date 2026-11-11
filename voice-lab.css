@@ -78,3 +78,76 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .transport { flex-wrap: wrap; }
   .transport .text-btn { margin-left: auto; }
 }
+
+/* ===== 声音克隆版界面 ===== */
+.top-actions { gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.status-dot.error { background: #d2684b; }
+.engine-chip { font-size: 11px; padding: 4px 8px; border-radius: 4px; background: #eef3f7; color: #56707f; border: 1px solid #dfe8ee; }
+.engine-chip[data-kind="ai"] { background: #edf7f3; color: #3f7d70; border-color: #d5ece2; }
+.engine-chip[data-kind="fallback"] { background: #fdf4e8; color: #97702f; border-color: #f2e2c6; }
+.engine-chip[data-kind=""] { background: #fdeeea; color: #a5503a; border-color: #f2d6ce; }
+
+.action-card.video-link { text-decoration: none; background: #f5f8f8; border-color: #d7e8e6; }
+.action-card.recording { border-color: #e6a08a; background: #fff6f2; }
+.action-card.recording .record-icon { background: #fbe0d7; color: #cf5636; }
+
+.style-list { display: grid; gap: 2px; margin-top: 12px; max-height: 420px; overflow-y: auto; }
+.saved-empty.error-text { color: #b34835; }
+
+.wave-card { position: relative; }
+.wave-segments { position: absolute; inset: 0; pointer-events: none; }
+.wave-segment {
+  position: absolute; top: 0; height: 12px; border-radius: 0 0 3px 3px;
+  background: #cfe4e1; pointer-events: auto; cursor: pointer; opacity: .85;
+}
+.wave-segment:hover { background: #a9cfc9; }
+.wave-segment.active { background: var(--teal); opacity: 1; }
+
+.transport .text-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.segment-bar { margin-top: 14px; border: 1px solid var(--line); border-radius: 7px; padding: 12px 14px; background: #fbfcfd; }
+.segment-bar-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.segment-bar-head b { font-size: 12px; }
+.segment-bar-head small { color: var(--muted); font-size: 11px; }
+.segment-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.segment-chip {
+  display: inline-flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  border: 1px solid #dde5e9; background: #fff; border-radius: 5px; padding: 5px 9px; cursor: pointer;
+  font: inherit; color: var(--ink); line-height: 1.3;
+}
+.segment-chip b { font-size: 11px; font-variant-numeric: tabular-nums; }
+.segment-chip small { font-size: 10px; color: var(--muted); }
+.segment-chip:hover { border-color: #bfd3d0; }
+.segment-chip.active { border-color: var(--teal); background: #f0f8f6; box-shadow: inset 0 0 0 1px var(--teal); }
+
+.builder-fields { grid-template-columns: minmax(0, .9fr) minmax(0, 1.6fr) auto; }
+.text-with-button { display: flex; gap: 6px; align-items: stretch; }
+.text-with-button input { flex: 1; }
+.mini-btn {
+  flex-shrink: 0; border: 1px solid #d7e3e1; background: #f3f8f7; color: #3f7d70;
+  border-radius: 5px; padding: 0 10px; font-size: 11px; cursor: pointer;
+}
+.mini-btn:hover:not(:disabled) { background: #e9f4f1; }
+.mini-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.service-state { flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.service-state #engineStatus { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+
+.speech-buttons { display: flex; gap: 8px; flex-shrink: 0; }
+.job-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.job-bar { flex: 1; height: 5px; border-radius: 3px; background: #e8ecef; overflow: hidden; }
+.job-bar div { height: 100%; width: 0; background: linear-gradient(90deg, #4e9691, #79c0b5); transition: width .3s ease; }
+.job-progress span { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.speech-result-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; }
+.speech-result-actions a { text-decoration: none; color: var(--teal); }
+
+@media (max-width: 1100px) {
+  .builder-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  .builder-fields { grid-template-columns: 1fr; }
+  .speech-buttons { width: 100%; flex-direction: column; }
+  .speech-buttons .export-btn { width: 100%; }
+  .style-list { max-height: none; }
+  .segment-bar-head { flex-direction: column; align-items: flex-start; }
+}

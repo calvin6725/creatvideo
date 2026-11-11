@@ -14,17 +14,17 @@ const S = {
   chunks: [],
   recording: false,
   voiceCtx: null,
-  localVoicesReady: false,
   generatingVoice: false,
-  referenceProfile: null
+  clones: []
 };
 
-const TTS_STYLES = {
-  cinemaMale: { pitch: -3, brightness: -12, warmth: 48, presence: 26, room: 5, drive: 2, resonance: -34, nasality: -6, breath: 3, vibrato: 4, speed: -5 },
-  cinemaFemale: { pitch: 2, brightness: 15, warmth: 22, presence: 22, room: 5, drive: 0, resonance: 18, nasality: -3, breath: 13, vibrato: 6, speed: -2 },
-  documentary: { pitch: -1, brightness: 4, warmth: 32, presence: 34, room: 3, drive: 0, resonance: -15, nasality: -4, breath: 2, vibrato: 2, speed: -4 },
-  suspense: { pitch: -4, brightness: -24, warmth: 42, presence: 8, room: 13, drive: 5, resonance: -38, nasality: -8, breath: 28, vibrato: 3, speed: -12 },
-  energetic: { pitch: 2, brightness: 35, warmth: -5, presence: 48, room: 2, drive: 1, resonance: 26, nasality: 5, breath: 5, vibrato: 7, speed: 12 }
+const TTS_STYLE_ADJUST = {
+  natural: { pitch: 0, speed: 0, presence: 0 },
+  broadcast: { pitch: 0, speed: 3, presence: 26 },
+  warm: { pitch: -1, speed: -2, warmth: 18 },
+  deep: { pitch: -3, speed: -4, warmth: 24, brightness: -12 },
+  soft: { pitch: 1, speed: -2, breath: 32 },
+  energetic: { pitch: 1, speed: 12, presence: 30 }
 };
 
 const fmt = value => {
@@ -254,129 +254,6 @@ function voiceSettingsRecord() {
   }
 }
 
-function buildVoiceGraph(ctx, destination, values) {
-  const input = ctx.createGain();
-  const high = ctx.createBiquadFilter();
-  const low = ctx.createBiquadFilter();
-  const resonance = ctx.createBiquadFilter();
-  const nasal = ctx.createBiquadFilter();
-  const peak = ctx.createBiquadFilter();
-  const shaper = ctx.createWaveShaper();
-  const compressor = ctx.createDynamicsCompressor();
-  const wet = ctx.createGain();
-  const dry = ctx.createGain();
-  const delay = ctx.createDelay(1);
-  const feedback = ctx.createGain();
-
-  high.type = 'highshelf';
-  high.frequency.value = 3200;
-  high.gain.value = values.brightness * .13 + values.breath * .07;
-  low.type = 'lowshelf';
-  low.frequency.value = 220;
-  low.gain.value = values.warmth * .12;
-  resonance.type = 'peaking';
-  resonance.frequency.value = 900 + values.resonance * 5;
-  resonance.Q.value = .85;
-  resonance.gain.value = values.resonance * .08;
-  nasal.type = 'peaking';
-  nasal.frequency.value = 1100;
-  nasal.Q.value = 1.35;
-  nasal.gain.value = values.nasality * .12;
-  peak.type = 'peaking';
-  peak.frequency.value = 1900;
-  peak.Q.value = 1.1;
-  peak.gain.value = values.presence * .1;
-
-  const amount = values.drive / 100;
-  if (amount > 0) {
-    const curve = new Float32Array(44100);
-    for (let index = 0; index < curve.length; index += 1) {
-      const point = index * 2 / curve.length - 1;
-      curve[index] = (1 + amount * 18) * point / (1 + amount * 18 * Math.abs(point));
-    }
-    shaper.curve = curve;
-    shaper.oversample = '4x';
-  }
-
-  compressor.threshold.value = -18 - values.breath * .035;
-  compressor.knee.value = 18;
-  compressor.ratio.value = 3;
-  compressor.attack.value = .003;
-  compressor.release.value = .2;
-  wet.gain.value = values.room / 100;
-  dry.gain.value = 1 - values.room / 180;
-  delay.delayTime.value = .09;
-  feedback.gain.value = .18;
-
-  input.connect(high).connect(low).connect(resonance).connect(nasal).connect(peak).connect(shaper).connect(compressor);
-  compressor.connect(dry).connect(destination);
-  compressor.connect(delay).connect(wet).connect(destination);
-  delay.connect(feedback).connect(delay);
-  return input;
-}
-
-function encodeWav(buffer) {
-  const channels = buffer.numberOfChannels;
-  const byteLength = buffer.length * channels * 2 + 44;
-  const output = new ArrayBuffer(byteLength);
-  const view = new DataView(output);
-  const write = (offset, value) => [...value].forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
-  write(0, 'RIFF');
-  view.setUint32(4, 36 + buffer.length * channels * 2, true);
-  write(8, 'WAVE');
-  write(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, buffer.sampleRate, true);
-  view.setUint32(28, buffer.sampleRate * channels * 2, true);
-  view.setUint16(32, channels * 2, true);
-  view.setUint16(34, 16, true);
-  write(36, 'data');
-  view.setUint32(40, buffer.length * channels * 2, true);
-  let position = 44;
-  for (let frame = 0; frame < buffer.length; frame += 1) {
-    for (let channel = 0; channel < channels; channel += 1) {
-      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[frame]));
-      view.setInt16(position, sample < 0 ? sample * 32768 : sample * 32767, true);
-      position += 2;
-    }
-  }
-  return new Blob([output], { type: 'audio/wav' });
-}
-
-async function processVoiceBlob(blob, values) {
-  const decodeContext = new AudioContext();
-  try {
-    const sourceBuffer = await decodeContext.decodeAudioData(await blob.arrayBuffer());
-    const playbackRate = Math.max(.7, Math.min(1.3, 1 + values.speed / 100));
-    const pitchRate = Math.pow(2, values.pitch / 12);
-    const tail = values.room > 0 ? .35 : .06;
-    const duration = sourceBuffer.duration / (playbackRate * pitchRate) + tail;
-    const frameCount = Math.max(1, Math.ceil(duration * sourceBuffer.sampleRate));
-    const offline = new OfflineAudioContext(sourceBuffer.numberOfChannels, frameCount, sourceBuffer.sampleRate);
-    const source = offline.createBufferSource();
-    source.buffer = sourceBuffer;
-    source.detune.value = values.pitch * 100;
-    source.playbackRate.value = playbackRate;
-    source.connect(buildVoiceGraph(offline, offline.destination, values));
-
-    if (values.vibrato > 0) {
-      const oscillator = offline.createOscillator();
-      const depth = offline.createGain();
-      oscillator.frequency.value = 4.8;
-      depth.gain.value = values.vibrato * 1.6;
-      oscillator.connect(depth).connect(source.detune);
-      oscillator.start();
-    }
-
-    source.start();
-    return encodeWav(await offline.startRendering());
-  } finally {
-    await decodeContext.close();
-  }
-}
-
 $('recordVoice').addEventListener('click', async () => {
   if (S.recording) {
     S.recorder.stop();
@@ -393,16 +270,9 @@ $('recordVoice').addEventListener('click', async () => {
       stream.getTracks().forEach(track => track.stop());
       S.recording = false;
       $('recordText').textContent = '录制解说';
-      status('正在套用声线实验室参数…');
-      try {
-        const raw = new Blob(S.chunks, { type: S.recorder.mimeType || 'audio/webm' });
-        const processed = await processVoiceBlob(raw, voiceSettingsRecord().values);
-        loadFile(new File([processed], '我的解说-已套用声线.wav', { type: 'audio/wav' }), 'voice');
-        status('录制解说已加入“我的解说”轨道');
-      } catch (error) {
-        console.error(error);
-        status('录音已完成，但声线处理失败');
-      }
+      const raw = new Blob(S.chunks, { type: S.recorder.mimeType || 'audio/webm' });
+      loadFile(new File([raw], '我的解说-录制.wav', { type: raw.type || 'audio/webm' }), 'voice');
+      status('录制解说已加入“我的解说”轨道');
     };
     S.recorder.start();
     S.recording = true;
@@ -416,108 +286,79 @@ $('recordVoice').addEventListener('click', async () => {
 
 function updateTtsButton() {
   const hasText = $('ttsText').value.trim().length > 0;
-  const needsReference = $('ttsStyle').value === 'myVoice' && !S.referenceProfile;
-  $('generateVoice').disabled = !S.localVoicesReady || !hasText || S.generatingVoice || needsReference;
+  $('generateVoice').disabled = !S.clones.length || !hasText || S.generatingVoice;
 }
 
 function clamp(value, min = -100, max = 100) {
   return Math.max(min, Math.min(max, value));
 }
 
-async function filteredEnergy(buffer, frequency, q = .8) {
-  const frames = Math.min(buffer.length, Math.floor(buffer.sampleRate * 20));
-  const offline = new OfflineAudioContext(1, frames, buffer.sampleRate);
-  const mono = offline.createBuffer(1, frames, buffer.sampleRate);
-  const target = mono.getChannelData(0);
-  for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
-    const source = buffer.getChannelData(channel);
-    for (let index = 0; index < frames; index += 1) target[index] += source[index] / buffer.numberOfChannels;
-  }
-  const node = offline.createBufferSource();
-  const filter = offline.createBiquadFilter();
-  node.buffer = mono;
-  filter.type = 'bandpass';
-  filter.frequency.value = frequency;
-  filter.Q.value = q;
-  node.connect(filter).connect(offline.destination);
-  node.start();
-  const rendered = await offline.startRendering();
-  const data = rendered.getChannelData(0);
-  let sum = 0;
-  for (let index = 0; index < data.length; index += 1) sum += data[index] * data[index];
-  return Math.sqrt(sum / Math.max(1, data.length));
-}
-
-async function analyzeReferenceVoice(file) {
-  const context = new AudioContext();
+/** 从声线实验室同步过来的默认参数（兼容旧格式） */
+function voiceSettingsRecord() {
+  const fallback = { pitch: 0, formant: 0, speed: 0, brightness: 0, warmth: 0, presence: 0, breath: 0, room: 0, deess: 35 };
   try {
-    const buffer = await context.decodeAudioData(await file.arrayBuffer());
-    if (buffer.duration < 3) throw new Error('参考录音至少需要 3 秒');
-    const [low, mid, high] = await Promise.all([
-      filteredEnergy(buffer, 180),
-      filteredEnergy(buffer, 1100),
-      filteredEnergy(buffer, 4200)
-    ]);
-    const total = Math.max(.00001, low + mid + high);
-    const lowRatio = low / total, midRatio = mid / total, highRatio = high / total;
-    return {
-      pitch: 0,
-      brightness: clamp((highRatio - .22) * 260),
-      warmth: clamp((lowRatio - .28) * 260),
-      presence: clamp((midRatio - .34) * 220),
-      room: 2,
-      drive: 0,
-      resonance: clamp((lowRatio - highRatio) * -120),
-      nasality: clamp((midRatio - .38) * 130),
-      breath: clamp((highRatio - .18) * 100, 0, 45),
-      vibrato: 3,
-      speed: 0
-    };
-  } finally {
-    await context.close();
-  }
+    const saved = JSON.parse(localStorage.getItem('voiceSettings') || 'null');
+    if (saved?.values) return { name: saved.style || 'natural', values: { ...fallback, ...saved.values } };
+  } catch (error) { /* 忽略 */ }
+  return { name: 'natural', values: fallback };
 }
 
-function selectedTtsSettings() {
+function ttsSettings() {
+  const base = voiceSettingsRecord().values;
   const style = $('ttsStyle').value;
-  if (style === 'current') return voiceSettingsRecord();
-  if (style === 'myVoice') return { name: '我的声音参考', values: S.referenceProfile || voiceSettingsRecord().values };
-  return { name: $('ttsStyle').selectedOptions[0].textContent, values: { ...voiceSettingsRecord().values, ...TTS_STYLES[style] } };
+  const adjust = TTS_STYLE_ADJUST[style] || {};
+  return {
+    ...base,
+    ...adjust,
+    pitch: Number(base.pitch || 0) + Number($('ttsPitch').value || 0),
+    speed: Number(base.speed || 0) + Number($('ttsSpeed').value || 0),
+    style
+  };
 }
 
-async function loadLocalVoices() {
+async function loadClonesIntoVideo() {
   try {
-    const response = await fetch('/api/voices', { cache: 'no-store' });
-    if (!response.ok) throw new Error('本机语音服务不可用');
-    const data = await response.json();
-    const voices = Array.isArray(data.voices) ? data.voices : [];
-    if (!voices.length) throw new Error('未找到 Windows 本机声线');
-
-    const select = $('ttsVoice');
+    const response = await fetch('/api/status', { cache: 'no-store' });
+    if (!response.ok) throw new Error('本机服务未响应');
+    const statusData = await response.json();
+    const data = await (await fetch('/api/clones', { cache: 'no-store' })).json();
+    S.clones = Array.isArray(data.clones) ? data.clones : [];
+    const select = $('ttsClone');
     select.innerHTML = '';
-    voices.forEach(voice => {
-      const option = document.createElement('option');
-      option.value = voice.name;
-      option.textContent = voice.name;
-      select.appendChild(option);
-    });
-    const preferred = voices.findIndex(voice => /Huihui|Chinese|中文/i.test(`${voice.name} ${voice.language || ''}`));
-    if (preferred >= 0) select.selectedIndex = preferred;
-    S.localVoicesReady = true;
-    $('ttsAvailability').textContent = `可用 ${voices.length} 个本机声线 · 沿用当前音色`;
+    if (!S.clones.length) {
+      select.innerHTML = '<option value="">还没有克隆音色</option>';
+      $('ttsAvailability').textContent = '先去声线实验室建立克隆音色';
+      $('ttsPanel').querySelector('.tts-generate').disabled = true;
+      const hint = document.createElement('div');
+      hint.className = 'tts-setup';
+      hint.innerHTML = '还没有克隆音色。<a href="index.html">打开声线实验室 →</a> 导入一段 3–10 秒的清晰人声（或整段视频），一键克隆后再回来。';
+      if (!document.querySelector('.tts-setup')) $('ttsPanel').insertBefore(hint, $('generateVoice'));
+      updateTtsButton();
+      return;
+    }
+    document.querySelector('.tts-setup')?.remove();
+    S.clones.forEach(clone => select.appendChild(new Option(`${clone.name}（${clone.seconds || 0}s）`, clone.id)));
+    const activeId = JSON.parse(localStorage.getItem('voiceActiveClone') || 'null');
+    if (activeId && S.clones.some(item => item.id === activeId)) select.value = activeId;
+    const engine = statusData.engine === 'ai';
+    $('ttsAvailability').textContent = engine
+      ? `AI 克隆可用 · ${S.clones.length} 个音色`
+      : `轻量模式 · ${S.clones.length} 个音色（未安装 AI 引擎）`;
     updateTtsButton();
   } catch (error) {
     console.error(error);
-    S.localVoicesReady = false;
-    $('ttsVoice').innerHTML = '<option>本机语音不可用</option>';
-    $('ttsAvailability').textContent = '本机语音服务未启动';
+    $('ttsAvailability').textContent = '本机服务未启动';
+    $('ttsClone').innerHTML = '<option value="">本机服务未启动</option>';
     $('generateVoice').disabled = true;
   }
 }
 
 $('openTts').addEventListener('click', () => {
   $('ttsPanel').hidden = !$('ttsPanel').hidden;
-  if (!$('ttsPanel').hidden) $('ttsText').focus();
+  if (!$('ttsPanel').hidden) {
+    loadClonesIntoVideo();
+    $('ttsText').focus();
+  }
 });
 
 $('closeTts').addEventListener('click', () => {
@@ -535,70 +376,58 @@ $('ttsText').addEventListener('keydown', event => {
   }
 });
 
-$('ttsStyle').addEventListener('change', () => {
-  const style = $('ttsStyle').value;
-  $('voiceReference').hidden = style !== 'myVoice';
-  const options = [...$('ttsVoice').options];
-  const prefersFemale = style === 'cinemaFemale';
-  const prefersMale = style === 'cinemaMale' || style === 'documentary' || style === 'suspense';
-  const match = options.findIndex(option => prefersFemale
-    ? /Yaoyao|Huihui|Zira/i.test(option.textContent)
-    : prefersMale ? /Kangkang|David|Mark/i.test(option.textContent) : false);
-  if (match >= 0) $('ttsVoice').selectedIndex = match;
-  updateTtsButton();
-});
+$('ttsPitch').addEventListener('input', () => { $('ttsPitchValue').textContent = `${$('ttsPitch').value > 0 ? '+' : ''}${$('ttsPitch').value} st`; });
+$('ttsSpeed').addEventListener('input', () => { $('ttsSpeedValue').textContent = `${$('ttsSpeed').value > 0 ? '+' : ''}${$('ttsSpeed').value}%`; });
+$('ttsClone').addEventListener('change', updateTtsButton);
 
-$('referenceVoice').addEventListener('change', async event => {
-  const file = event.target.files[0];
-  if (!file) return;
-  $('referenceStatus').textContent = '正在本机分析音色特征…';
-  try {
-    S.referenceProfile = await analyzeReferenceVoice(file);
-    localStorage.setItem('authorizedVoiceProfile', JSON.stringify(S.referenceProfile));
-    $('referenceStatus').textContent = `已建立轻量音色参考：${file.name}`;
-    status('本人的声音参考已保存到当前浏览器');
-  } catch (error) {
-    S.referenceProfile = null;
-    $('referenceStatus').textContent = error.message || '无法分析该录音';
+async function waitForJob(jobId) {
+  for (let attempt = 0; attempt < 1500; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 700));
+    const job = await (await fetch(`/api/tts/jobs/${jobId}`)).json();
+    if (job.detail) $('ttsAvailability').textContent = `${Math.round((job.progress || 0) * 100)}% · ${job.detail}`;
+    if (job.status === 'done') return true;
+    if (job.status === 'error') throw new Error(job.detail || '合成失败');
   }
-  updateTtsButton();
-});
+  throw new Error('合成超时');
+}
 
 $('generateVoice').addEventListener('click', async () => {
   const text = $('ttsText').value.trim();
-  if (!text || !S.localVoicesReady || S.generatingVoice) return;
+  const cloneId = $('ttsClone').value;
+  if (!text || !cloneId || S.generatingVoice) return;
 
   S.generatingVoice = true;
   updateTtsButton();
   const button = $('generateVoice');
   const originalLabel = button.textContent;
-  button.textContent = 'Windows 本机合成中…';
-  status('正在用 Windows 本机语音生成解说…');
+  button.textContent = '克隆合成中…';
+  status('正在用克隆音色生成解说…');
 
   try {
-    const response = await fetch('/api/tts', {
+    const response = await fetch('/api/tts/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice: $('ttsVoice').value })
+      body: JSON.stringify({ text, cloneId, settings: ttsSettings() })
     });
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
-      throw new Error(failure.error || '本机语音合成失败');
+      throw new Error(failure.error || '合成请求失败');
     }
-
-    const raw = await response.blob();
-    button.textContent = '正在套用当前声线…';
-    status('正在套用声线实验室的音调、语速和音色…');
-    const settings = selectedTtsSettings();
-    const processed = await processVoiceBlob(raw, settings.values);
-    const file = new File([processed], '文字生成解说-已套用声线.wav', { type: 'audio/wav' });
-    loadFile(file, 'voice');
-    $('voiceName').textContent = `文字生成解说 · ${settings.name}`;
+    const job = await response.json();
+    await waitForJob(job.id);
+    const audio = await fetch(`/api/tts/jobs/${job.id}/audio`);
+    if (!audio.ok) throw new Error('取回合成音频失败');
+    const blob = await audio.blob();
+    const cloneName = $('ttsClone').selectedOptions[0]?.textContent || '克隆音色';
+    loadFile(new File([blob], '文字解说-克隆音色.wav', { type: 'audio/wav' }), 'voice');
+    $('voiceName').textContent = `克隆解说 · ${cloneName}`;
     status('文字解说已生成并加入“我的解说”轨道');
+    $('ttsAvailability').textContent = `AI 克隆可用 · ${S.clones.length} 个音色`;
     $('ttsPanel').hidden = true;
   } catch (error) {
     console.error(error);
     status(error.message || '文字解说生成失败');
+    $('ttsAvailability').textContent = error.message || '生成失败';
   } finally {
     S.generatingVoice = false;
     button.textContent = originalLabel;
@@ -734,10 +563,4 @@ async function exportVideo() {
 }
 
 $('exportBtn').addEventListener('click', exportVideo);
-try {
-  S.referenceProfile = JSON.parse(localStorage.getItem('authorizedVoiceProfile') || 'null');
-  if (S.referenceProfile) $('referenceStatus').textContent = '已载入此前保存的本人/授权音色参考。';
-} catch (error) {
-  S.referenceProfile = null;
-}
-loadLocalVoices();
+loadClonesIntoVideo();
