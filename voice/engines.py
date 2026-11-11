@@ -389,7 +389,14 @@ class ZipVoiceEngine:
         if self.model is None:
             raise EngineError("模型尚未载入")
         feat_dtype = torch.float16 if self.dtype == "fp16" else torch.float32
-        with torch.inference_mode():
+        # fp16 时用 autocast 包住整段：ZipVoice 内部有少量 fp32 常量/中间量，
+        # 纯 fp16 会报「Float 与 Half 混用」，autocast 会自动按算子选精度。
+        amp = torch.autocast(
+            device_type="cuda" if self.device == "cuda" else "cpu",
+            dtype=torch.float16,
+            enabled=self.dtype == "fp16",
+        )
+        with torch.inference_mode(), amp:
             features = self.fbank.extract(np.asarray(prompt_audio, dtype=np.float32), sampling_rate=SAMPLE_RATE)
             features = torch.as_tensor(np.asarray(features)).to(self.device, dtype=feat_dtype)
             features = features.unsqueeze(0) * FEAT_SCALE
@@ -490,12 +497,101 @@ class ZipVoiceEngine:
             self._empty_cache()
 
 
+def _stub_heavy_training_deps() -> None:
+    """ZipVoice 的 utils 在 import 时就会拉起 tensorboard（训练期依赖）。
+
+    推理完全用不到它。没装 tensorboard 时，这里把相关模块替换成空壳，
+    避免用户为了合成去装几个 GB 的训练依赖。
+    """
+    import sys as _sys
+    import types
+    from importlib.util import find_spec
+
+    if find_spec("tensorboard") is not None:
+        return  # 真装了就不动
+
+    class _SummaryWriter:  # pragma: no cover - 仅推理时占位
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_scalar(self, *args, **kwargs):
+            pass
+
+        def add_scalars(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
+
+    def _module(name: str, **attrs) -> types.ModuleType:
+        module = types.ModuleType(name)
+        module.__dict__.update(attrs)
+        _sys.modules[name] = module
+        return module
+
+    _module("tensorboard", __version__="2.13.0-stub", SummaryWriter=_SummaryWriter)
+    _module("tensorboard.plugins")
+    _module("tensorboard.plugins.hparams")
+    _module("tensorboard.plugins.hparams.api",
+            HParam=lambda *a, **k: None, Metric=lambda *a, **k: None,
+            hparams=type("hparams", (), {"HParam": staticmethod(lambda *a, **k: None)}))
+    _module("torch.utils.tensorboard", SummaryWriter=_SummaryWriter)
+
+
+def _patch_fp16_activations() -> None:
+    """修掉 ZipVoice 半精度下的 dtype 崩溃（显存不足降级 fp16 时必备）。
+
+    ZipVoice 的 SwooshL / SwooshR 激活会把 fp16 输入临时转成 fp32 计算，
+    但忘记转回来，后面 linear 就会报「Float 与 Half 混用」。
+    推理阶段直接换成等价公式，既修好 dtype，也省掉一次多余的反传。
+    """
+    try:
+        import torch
+        from zipvoice.models.modules import scaling
+    except Exception:  # 结构变化 / 依赖缺失：交给 autocast 兜底
+        return
+
+    def forward_module(shift: float, const: float):
+        def forward(self, x):
+            dtype = x.dtype
+            x32 = x.float()
+            y = torch.logaddexp(x32.new_zeros(()), x32 - shift) - 0.08 * x32 - const
+            return y.to(dtype)
+
+        return forward
+
+    def forward_function(shift: float, const: float):
+        def forward(x):
+            dtype = x.dtype
+            x32 = x.float()
+            y = torch.logaddexp(x32.new_zeros(()), x32 - shift) - 0.08 * x32 - const
+            return y.to(dtype)
+
+        return forward
+
+    for name, shift, const in (("SwooshL", 4.0, 0.035), ("SwooshR", 1.0, 0.313261687)):
+        module_cls = getattr(scaling, name, None)
+        if module_cls is not None:
+            try:
+                module_cls.forward = forward_module(shift, const)
+            except Exception:
+                pass
+        func = getattr(scaling, f"{name}Forward", None)
+        if func is not None:
+            try:
+                setattr(scaling, f"{name}Forward", forward_function(shift, const))
+            except Exception:
+                pass
+
+
 def _import_zipvoice() -> None:
     """提前导入一次，方便把 ImportError 转成可操作的提示。"""
+    _stub_heavy_training_deps()
     import zipvoice.models.zipvoice
     import zipvoice.tokenizer.tokenizer
     import zipvoice.utils.feature
 
+    _patch_fp16_activations()
     _ = (zipvoice.models.zipvoice, zipvoice.tokenizer.tokenizer, zipvoice.utils.feature)
 
 
@@ -708,7 +804,11 @@ class EngineManager:
             raise EngineError("克隆音色缺少参考音频或参考文字，请重新导入音频建立音色")
         audio, rate = ai.synthesize(text, prompt_audio, prompt_rate, prompt_text, progress)
         profile = prepare_clone_profile(clone, audio, rate, settings)
-        audio, rate = finish_audio(audio, rate, profile, settings, use_formant_shift=True)
+        # 克隆模型已经学到了参考人的音色：不再叠加自动共振峰搬迁，
+        # 只用用户显式拖动的滑块 + 轻量润色，避免「越修越像机器人」。
+        audio, rate = finish_audio(
+            audio, rate, profile, settings, use_formant_shift=False, gentle=True
+        )
         return audio, rate, {
             "engine": "ai",
             "detail": f"ZipVoice 克隆 · {ai.dtype} · {ai.device}",

@@ -116,8 +116,13 @@ def finish_audio(
     profile: dict,
     settings: dict,
     use_formant_shift: bool = True,
+    gentle: bool = False,
 ) -> tuple[np.ndarray, int]:
-    """对合成结果做音色匹配与润色，返回 (音频, 采样率)。"""
+    """对合成结果做音色匹配与润色，返回 (音频, 采样率)。
+
+    gentle=True 用于 AI 克隆结果：克隆模型本身已经贴合参考人的音色，
+    再叠加共振峰搬迁 / 重压缩容易发闷、发死板，所以只做很轻的润色。
+    """
     cfg = LegacySettings.from_dict(settings)
     data = to_mono(audio).astype(np.float32)
     if data.size == 0:
@@ -154,7 +159,10 @@ def finish_audio(
     # 3) 频率响应匹配目标音色 + 明暗 / 冷暖 / 存在感
     target_profile = profile.get("profile")
     if target_profile is not None and np.asarray(target_profile).size:
-        strength = float(profile.get("eqStrength") or (0.35 if profile.get("self") else 0.55))
+        default_strength = (0.35 if profile.get("self") else 0.55)
+        if gentle and not profile.get("self"):
+            default_strength = 0.3  # 克隆结果只做轻微频响对齐
+        strength = float(profile.get("eqStrength") or default_strength)
         data = dsp.eq_matches(data, rate, np.asarray(target_profile, dtype=np.float32), strength=strength)
     if abs(cfg.warmth) > 1:
         data = dsp.shelf(data, rate, 220.0, cfg.warmth / 100.0 * 5.0, high=False)
@@ -175,7 +183,11 @@ def finish_audio(
 
     # 4) 齿音抑制 + 动态 + 气声 + 空间
     data = dsp.de_ess(data, rate, strength=float(np.clip(cfg.deess / 100.0, 0.0, 1.0)) * 0.55)
-    data = dsp.compress(data, rate)
+    if gentle:
+        # 轻压缩：保留说话人的自然起伏，只把忽大忽小收一收
+        data = dsp.compress(data, rate, threshold_db=-24.0, ratio=1.6, makeup=1.1)
+    else:
+        data = dsp.compress(data, rate)
     if cfg.breath > 1:
         data = dsp.add_breath(data, rate, cfg.breath / 100.0 * 0.06)
     if cfg.room > 0.5:

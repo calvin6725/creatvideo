@@ -79,6 +79,27 @@ def test_finish_audio_produces_valid_output():
     assert len(out) == len(signal)
 
 
+def test_finish_audio_gentle_mode_keeps_dynamics():
+    """AI 克隆结果走 gentle 模式：只轻压缩，动态比普通模式保留得更多。"""
+    rate = 24000
+    loud = harmonic_tone(1.0, 170.0, rate) * 0.9
+    quiet = harmonic_tone(1.0, 170.0, rate) * 0.05
+    signal = np.concatenate([loud, quiet]).astype(np.float32)
+    features = processor.analyze_clone(signal, rate)
+    profile = processor.prepare_clone_profile({"features": features}, signal, rate, {})
+
+    def ratio_of_dynamics(out):
+        half = out.size // 2
+        return float(rms(out[:half]) / max(rms(out[half:]), 1e-6))
+
+    normal, _ = processor.finish_audio(signal, rate, profile, {}, use_formant_shift=False)
+    gentle, _ = processor.finish_audio(
+        signal, rate, profile, {}, use_formant_shift=False, gentle=True
+    )
+    assert ratio_of_dynamics(gentle) > ratio_of_dynamics(normal)
+    assert np.isfinite(gentle).all() and len(gentle) == len(signal)
+
+
 def test_split_sentences_and_budget():
     text = "第一句话。第二句话！第三句比较长的内容，需要按逗号切开吗？最后一句"
     sentences = segment.split_sentences(text)

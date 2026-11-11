@@ -17,3 +17,6 @@ jieba>=0.42.1
 pypinyin>=0.51.0
 cn2an>=0.5.22
 inflect>=7.0.0
+# ZipVoice 的 utils 在 import 时会用到 tensorboard 的 SummaryWriter（推理其实用不到，
+# 项目里也有兜底的空模块，装不上也能跑）
+tensorboard>=2.13

@@ -34,6 +34,8 @@ MODEL_NAME = "zipvoice_distill"
 HF_REPO = "k2-fsa/ZipVoice"
 VOCOS_REPO = "charactr/vocos-mel-24khz"
 ZIPVOICE_REPO = "https://github.com/k2-fsa/ZipVoice.git"
+ZIPVOICE_ZIP = "https://codeload.github.com/k2-fsa/ZipVoice/zip/refs/heads/master"
+MODELSCOPE_URL = "https://modelscope.cn/models/k2-fsa/ZipVoice"
 THIRD_PARTY = ROOT / "third_party"
 
 
@@ -125,7 +127,7 @@ def install_all(python: Path | None = None, mirror: bool = False, cpu: bool = Fa
 # 推理必需的包（装不上就是装不上，要提示用户）
 AI_CORE = [
     "vocos", "safetensors", "huggingface_hub", "lhotse", "jieba",
-    "pypinyin", "cn2an", "inflect", "urllib3",
+    "pypinyin", "cn2an", "inflect", "urllib3", "tensorboard",
 ]
 # 可选增强：语音识别（不装可以手填参考文字）
 AI_OPTIONAL = [("faster-whisper", "参考音频自动识别文字")]
@@ -213,26 +215,77 @@ def ensure_zipvoice_repo() -> Path:
     log("下载 ZipVoice 代码（只用于模型结构，不训练、不占显存）")
     result = run(["git", "clone", "--depth", "1", ZIPVOICE_REPO, str(target)], check=False)
     if result.returncode != 0 or not (target / "zipvoice").is_dir():
-        raise SystemExit(
-            "下载 ZipVoice 失败。请手动执行：\n"
-            f"  git clone --depth 1 {ZIPVOICE_REPO} {target}"
-        )
+        # 没装 git 的电脑：直接下 GitHub 的 zip 包
+        print("! git 方式失败，改用压缩包下载")
+        if not _download_zip(ZIPVOICE_ZIP, target):
+            raise SystemExit(
+                "下载 ZipVoice 失败。可以手动下载后解压：\n"
+                f"  {ZIPVOICE_ZIP}\n"
+                f"  解压出的 zipvoice 目录放到 {target}"
+            )
     return target
 
 
-def download_models(use_mirror: bool) -> None:
-    if use_mirror or os.environ.get("CREATVIDEO_HF_MIRROR"):
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        print(f"使用镜像：{os.environ['HF_ENDPOINT']}")
+def _download_zip(url: str, target: Path) -> bool:
+    """下载 GitHub 压缩包并解出 zipvoice 目录（不需要 git）。"""
+    import io
+    import urllib.request
+    import zipfile
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "creatvideo-setup"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            payload = resp.read()
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            root = archive.namelist()[0].split("/")[0] + "/"
+            tmp = target.parent / (target.name + "_extract")
+            shutil.rmtree(tmp, ignore_errors=True)
+            archive.extractall(tmp)
+        src = tmp / root
+        target.mkdir(parents=True, exist_ok=True)
+        for item in src.iterdir():
+            dest = target / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, dest)
+        shutil.rmtree(tmp, ignore_errors=True)
+        print(f"✓ 代码已解压到 {target}")
+        return (target / "zipvoice").is_dir()
+    except Exception as exc:
+        print(f"! 压缩包下载失败：{exc}")
+        return False
+
+
+HF_ENDPOINTS = ["https://huggingface.co", "https://hf-mirror.com"]
+
+
+def _fetch_hf_file(repo: str, filename: str, target: Path, endpoints: list[str]) -> None:
+    """从 HuggingFace（或镜像）下载单个文件，多个入口依次尝试。"""
     from huggingface_hub import hf_hub_download
 
+    errors = []
+    for endpoint in endpoints:
+        os.environ["HF_ENDPOINT"] = endpoint
+        try:
+            path = hf_hub_download(repo, filename=filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            return
+        except Exception as exc:  # 换下一个入口
+            errors.append(f"{endpoint}: {exc}")
+    raise RuntimeError("；".join(errors))
+
+
+def download_models(use_mirror: bool) -> None:
+    endpoints = HF_ENDPOINTS[::-1] if (use_mirror or os.environ.get("CREATVIDEO_HF_MIRROR")) else HF_ENDPOINTS
+    print(f"下载入口顺序：{' → '.join(endpoints)}")
     target = MODELS / MODEL_NAME
     target.mkdir(parents=True, exist_ok=True)
     log(f"下载 ZipVoice-Distill 模型到 {target}（约 500 MB，只需一次）")
     try:
         for name in ("model.pt", "model.json", "tokens.txt"):
-            path = hf_hub_download(HF_REPO, filename=f"{MODEL_NAME}/{name}")
-            shutil.copy2(path, target / name)
+            _fetch_hf_file(HF_REPO, f"{MODEL_NAME}/{name}", target / name, endpoints)
             print(f"  ✓ {name}")
     except Exception as exc:
         raise SystemExit(
@@ -240,6 +293,8 @@ def download_models(use_mirror: bool) -> None:
             f"  {exc}\n\n"
             "可以这样补救（任选其一）：\n"
             "  1) 加镜像参数重跑：python tools/setup_ai.py --skip-torch --mirror\n"
+            "     （镜像也会失败时，用浏览器打开 ModelScope 下载）\n"
+            f"     {MODELSCOPE_URL}\n"
             "  2) 手动下载下面 3 个文件，放到 " + str(target) + "\n"
             f"     https://huggingface.co/{HF_REPO}/tree/main/{MODEL_NAME}\n"
             "     （model.pt、model.json、tokens.txt）\n"
@@ -248,15 +303,21 @@ def download_models(use_mirror: bool) -> None:
     vocos = MODELS / MODEL_NAME / "vocos"
     vocos.mkdir(exist_ok=True)
     log("下载声码器 vocos-mel-24khz（约 50 MB）")
-    for name, local in (("config.yaml", "config.yaml"), ("pytorch_model.bin", "pytorch_model.bin")):
-        path = hf_hub_download(VOCOS_REPO, filename=name)
-        shutil.copy2(path, vocos / local)
-        print(f"  ✓ vocos/{local}")
+    try:
+        for name in ("config.yaml", "pytorch_model.bin"):
+            _fetch_hf_file(VOCOS_REPO, name, vocos / name, endpoints)
+            print(f"  ✓ vocos/{name}")
+    except Exception as exc:
+        print(f"! 声码器下载失败：{exc}")
+        print("  引擎会自动改用 vocos 官方缓存（首次合成时联网下载一次）")
 
 
 def model_ready() -> bool:
     target = MODELS / MODEL_NAME
-    return all((target / name).is_file() for name in ("model.pt", "model.json", "tokens.txt"))
+    if not all((target / name).is_file() for name in ("model.pt", "model.json", "tokens.txt")):
+        return False
+    # 文件可能只下了一半（模型约 500MB）
+    return (target / "model.pt").stat().st_size > 100 * 1024 * 1024
 
 
 def verify(python: Path) -> None:
