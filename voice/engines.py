@@ -151,6 +151,25 @@ class ZipVoiceEngine:
         self._torch = None
 
     # ---------------------------------------------------------------- 状态
+    REQUIRED_MODULES = {
+        "torch": "PyTorch",
+        "vocos": "声码器 vocos",
+        "lhotse": "lhotse",
+        "jieba": "jieba 分词",
+        "pypinyin": "pypinyin 注音",
+        "piper_phonemize": "piper_phonemize 音素",
+    }
+
+    def missing_dependencies(self) -> list[str]:
+        """列出缺失的 AI 依赖，用于给出准确的安装提示。"""
+        from importlib.util import find_spec
+
+        missing = []
+        for module, label in self.REQUIRED_MODULES.items():
+            if find_spec(module) is None:
+                missing.append(label)
+        return missing
+
     def probe(self) -> EngineStatus:
         if self.model is not None:
             return EngineStatus(
@@ -158,8 +177,12 @@ class ZipVoiceEngine:
                 f"AI 克隆引擎已就绪（{self.model_dir.name if self.model_dir else 'ZipVoice'} · {self.num_step} 步）",
                 self.device, self.dtype, str(self.model_dir or ""),
             )
-        if not _torch_installed():
-            return EngineStatus("ai", False, "未安装 PyTorch，运行“安装AI克隆引擎.bat”即可启用")
+        missing = self.missing_dependencies()
+        if missing:
+            return EngineStatus(
+                "ai", False,
+                "缺少 AI 组件：" + "、".join(missing) + "。请运行“安装AI克隆引擎.bat”安装",
+            )
         model_dir = find_model_dir(self.cfg)
         if model_dir is None:
             return EngineStatus("ai", False, "未找到 ZipVoice 模型文件（models/zipvoice_distill）")
@@ -211,6 +234,11 @@ class ZipVoiceEngine:
     def _ensure_helpers(self):
         if self._helpers is not None:
             return self._helpers
+        missing = self.missing_dependencies()
+        if missing:
+            raise EngineError(
+                "缺少 AI 组件：" + "、".join(missing) + "。请双击“安装AI克隆引擎.bat”重新安装。"
+            )
         repo = Path(self.cfg.zipvoice_repo).expanduser()
         if not (repo / "zipvoice").is_dir():
             raise EngineError(
@@ -219,6 +247,13 @@ class ZipVoiceEngine:
             )
         if str(repo) not in sys.path:
             sys.path.insert(0, str(repo))
+        try:
+            _import_zipvoice()
+        except ImportError as exc:
+            raise EngineError(
+                f"ZipVoice 代码无法导入（{exc}）。请确认 third_party/ZipVoice 完整，"
+                "或重新运行“安装AI克隆引擎.bat”。"
+            ) from exc
         from zipvoice.models.zipvoice import ZipVoice  # type: ignore
         from zipvoice.models.zipvoice_distill import ZipVoiceDistill  # type: ignore
         from zipvoice.tokenizer.tokenizer import EmiliaTokenizer  # type: ignore
@@ -455,10 +490,13 @@ class ZipVoiceEngine:
             self._empty_cache()
 
 
-def _torch_installed() -> bool:
-    from importlib.util import find_spec
+def _import_zipvoice() -> None:
+    """提前导入一次，方便把 ImportError 转成可操作的提示。"""
+    import zipvoice.models.zipvoice
+    import zipvoice.tokenizer.tokenizer
+    import zipvoice.utils.feature
 
-    return find_spec("torch") is not None
+    _ = (zipvoice.models.zipvoice, zipvoice.tokenizer.tokenizer, zipvoice.utils.feature)
 
 
 def harmonic_probe(rate: int, seconds: float = 1.2) -> np.ndarray:

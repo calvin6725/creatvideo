@@ -88,6 +88,16 @@
             </label>
             <button class="export-btn" id="createCloneBtn" disabled><i data-lucide="audio-lines" aria-hidden="true"></i><span id="createCloneLabel">建立克隆音色</span></button>
           </div>
+          <div class="install-panel" id="installPanel" hidden>
+            <div class="install-head"><b>还没安装 AI 克隆引擎</b><small>首次安装约 1GB（PyTorch + 模型），只需一次</small></div>
+            <p id="installDetail">建议先关掉游戏和剪辑软件，安装过程可能占用几分钟。</p>
+            <div class="install-actions">
+              <button class="export-btn" id="installBtn" type="button"><i data-lucide="download" aria-hidden="true"></i><span>一键安装到本机</span></button>
+              <label class="install-check"><input type="checkbox" id="installMirror" checked> 国内网络（用镜像下载模型）</label>
+              <label class="install-check"><input type="checkbox" id="installCpu"> 用 CPU（没有可用 NVIDIA 显卡时）</label>
+            </div>
+            <pre class="install-log" id="installLog" hidden></pre>
+          </div>
           <p class="lab-message" id="cloneStatus" role="status">导入音频后即可建立音色</p>
           <div class="service-state">
             <span id="engineStatus">正在检查本机引擎…</span>

@@ -202,6 +202,64 @@ def synthesize(text: str, clone_id: Optional[str], settings: dict, engine: Optio
 
 
 # --------------------------------------------------------------------------- #
+# 一键安装 AI 引擎（页面上的“一键安装”按钮）
+# --------------------------------------------------------------------------- #
+INSTALL_STATE = {"running": False, "done": False, "error": "", "log": []}
+INSTALL_LOCK = threading.Lock()
+
+
+def _setup_module():
+    import importlib.util
+
+    path = APP_DIR / "tools" / "setup_ai.py"
+    spec = importlib.util.spec_from_file_location("creatvideo_setup_ai", path)
+    if spec is None or spec.loader is None:
+        raise HttpError(500, "找不到安装脚本 tools/setup_ai.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def start_install(mirror: bool = False, cpu: bool = False) -> dict:
+    with INSTALL_LOCK:
+        if INSTALL_STATE["running"]:
+            return dict(INSTALL_STATE)
+        INSTALL_STATE.update(running=True, done=False, error="", log=[])
+    threading.Thread(target=_run_install, args=(mirror, cpu), daemon=True).start()
+    return dict(INSTALL_STATE)
+
+
+def _run_install(mirror: bool, cpu: bool) -> None:
+    import contextlib
+    import io
+
+    class _Tee(io.TextIOBase):
+        def write(self, text: str) -> int:  # noqa: D401
+            for line in text.splitlines():
+                if line.strip():
+                    with INSTALL_LOCK:
+                        INSTALL_STATE["log"] = (INSTALL_STATE["log"] + [line.strip()])[-120:]
+            return len(text)
+
+    try:
+        module = _setup_module()
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(_Tee()), contextlib.redirect_stderr(_Tee()):
+            module.install_all(mirror=mirror, cpu=cpu)
+            print(buffer.getvalue())
+        ENGINE.ai._error = None  # 安装完成后重新检查
+        with INSTALL_LOCK:
+            INSTALL_STATE.update(running=False, done=True, error="")
+    except SystemExit as exc:
+        with INSTALL_LOCK:
+            INSTALL_STATE.update(running=False, done=False, error=f"安装中断：{exc}")
+    except Exception as exc:  # pragma: no cover - 依赖外部网络
+        log.error("安装失败：%s\n%s", exc, traceback.format_exc())
+        with INSTALL_LOCK:
+            INSTALL_STATE.update(running=False, done=False, error=str(exc))
+
+
+# --------------------------------------------------------------------------- #
 # 异步任务
 # --------------------------------------------------------------------------- #
 def start_job(text: str, clone_id: Optional[str], settings: dict, engine: Optional[str]) -> dict:
@@ -269,6 +327,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _error(self, status: int, message: str) -> None:
         self._json(status, {"error": message})
+
+    def _is_loopback(self) -> bool:
+        address = self.client_address[0] if self.client_address else ""
+        return address in ("127.0.0.1", "::1") or address.startswith("127.")
 
     def _read_body(self, limit: int = 200 * 1024 * 1024) -> bytes:
         length = int(self.headers.get("Content-Length") or 0)
@@ -420,8 +482,18 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._json(200, job)
                 return
+            if path == "/api/install/status":
+                with INSTALL_LOCK:
+                    self._json(200, dict(INSTALL_STATE))
+                return
             if path == "/api/release":
                 self._json(200, {"ok": True, **ENGINE.ai.release()})
+                return
+            if path == "/api/install":
+                if not self._is_loopback():
+                    raise HttpError(403, "只允许在本机触发安装")
+                payload = self._read_json()
+                self._json(200, start_install(bool(payload.get("mirror")), bool(payload.get("cpu"))))
                 return
             if path == "/api/warmup":
                 try:
@@ -465,6 +537,7 @@ class Handler(BaseHTTPRequestHandler):
             clones=len(STORE.list()),
             transcription={"available": asr.available()[0], "detail": asr.available()[1]},
             prompts={"min": CONFIG.prompt_min_seconds, "max": CONFIG.prompt_max_seconds},
+            install={k: v for k, v in INSTALL_STATE.items() if k != "log"},
         )
         return status
 

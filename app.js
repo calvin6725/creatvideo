@@ -107,6 +107,24 @@ async function loadStatus(silent = false) {
       $('engineStatus').textContent = data.detail || '没有可用的语音引擎';
       $('builderBadge').textContent = '引擎不可用';
     }
+    // 没装 AI 引擎时，直接给一个“一键安装”面板（后台跑 tools/setup_ai.py）
+    const install = data.install || {};
+    const showInstall = engine !== 'ai';
+    $('installPanel').hidden = !showInstall;
+    if (showInstall) {
+      if (install.running) {
+        $('installBtn').disabled = true;
+        $('installBtn').querySelector('span').textContent = '正在安装…';
+        pollInstall();
+      } else if (install.done) {
+        $('installDetail').textContent = '安装完成，正在重新检测引擎…';
+      } else if (install.error) {
+        $('installDetail').textContent = `上次安装失败：${install.error}。也可以手动双击“安装AI克隆引擎.bat”。`;
+      } else {
+        $('installBtn').disabled = false;
+        $('installBtn').querySelector('span').textContent = '一键安装到本机';
+      }
+    }
     const stt = data.transcription || {};
     $('transcribeBtn').disabled = !stt.available;
     $('transcribeBtn').title = stt.available ? '用本机语音识别自动填写参考文字' : (stt.detail || '未安装语音识别模型，请手动填写');
@@ -115,6 +133,65 @@ async function loadStatus(silent = false) {
     $('engineStatus').textContent = `无法连接本机服务：${error.message}。请先运行“启动声线实验室.bat”。`;
     $('engineBadge').textContent = '服务未启动';
     setStatus('本机服务未连接', 'error');
+  }
+}
+
+/* ------------------------------------------------------- 一键安装 AI 引擎 */
+function renderInstallLog(lines) {
+  const node = $('installLog');
+  if (!lines || !lines.length) return;
+  node.hidden = false;
+  node.textContent = lines.slice(-14).join('\n');
+  node.scrollTop = node.scrollHeight;
+}
+
+async function pollInstall() {
+  if (state.installTimer) return;
+  const tick = async () => {
+    try {
+      const data = await apiJson('/api/install/status');
+      state.installTimer = null;
+      if (data.log) renderInstallLog(data.log);
+      if (data.running) {
+        $('installDetail').textContent = '正在安装，请保持网络畅通，不要关闭这个页面…';
+        state.installTimer = setTimeout(tick, 2500);
+        return;
+      }
+      $('installBtn').disabled = false;
+      $('installBtn').querySelector('span').textContent = '一键安装到本机';
+      if (data.done) {
+        $('installDetail').textContent = '安装完成，正在重新检测引擎…';
+        await loadStatus(true);
+        setStatus('AI 克隆引擎已安装，可以建立音色了');
+      } else if (data.error) {
+        $('installDetail').textContent = `安装失败：${data.error}。可以改用“安装AI克隆引擎.bat”，或加参数 --mirror 重试。`;
+        setStatus('安装失败', 'error');
+      }
+    } catch (error) {
+      state.installTimer = null;
+      setStatus(`无法查询安装进度：${error.message}`, 'error');
+    }
+  };
+  state.installTimer = setTimeout(tick, 1200);
+}
+
+async function startInstall() {
+  $('installBtn').disabled = true;
+  $('installBtn').querySelector('span').textContent = '正在安装…';
+  $('installLog').hidden = false;
+  $('installLog').textContent = '开始安装…';
+  setStatus('正在安装 AI 克隆引擎…');
+  try {
+    await apiJson('/api/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mirror: $('installMirror').checked, cpu: $('installCpu').checked })
+    });
+    await pollInstall();
+  } catch (error) {
+    $('installDetail').textContent = `无法启动安装：${error.message}。请手动双击“安装AI克隆引擎.bat”。`;
+    $('installBtn').disabled = false;
+    setStatus('安装未启动', 'error');
   }
 }
 
@@ -737,6 +814,7 @@ function bind() {
     } catch (error) { setStatus(error.message, 'error'); }
     $('warmupBtn').disabled = false;
   });
+  $('installBtn').addEventListener('click', startInstall);
   $('releaseBtn').addEventListener('click', async () => {
     $('releaseBtn').disabled = true;
     try {

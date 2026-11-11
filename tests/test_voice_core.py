@@ -192,3 +192,19 @@ def test_prepare_prompt_normalizes_and_trims():
     assert len(prompt) / SAMPLE_RATE < 2.6, "首尾静音应该被去掉"
     assert original_rms < TARGET_RMS
     assert abs(rms(prompt) - TARGET_RMS) < 0.02, "参考音频音量要对齐到目标值"
+
+
+def test_missing_dependencies_are_reported(monkeypatch, tmp_path):
+    """没装 AI 依赖时，状态里要明确指出缺了什么，而不是只说“不可用”。"""
+    from voice import config, engines
+
+    cfg = config.Config()
+    engine = engines.ZipVoiceEngine(cfg)
+    status = engine.probe()
+    if status.available:
+        pytest.skip("当前环境已经装好 AI 依赖")
+    assert "安装" in status.detail
+    missing = engine.missing_dependencies()
+    assert isinstance(missing, list)
+    if missing:
+        assert all(label in status.detail for label in missing[:1])

@@ -151,3 +151,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .style-list { max-height: none; }
   .segment-bar-head { flex-direction: column; align-items: flex-start; }
 }
+
+.install-panel { margin-top: 16px; border: 1px solid #f0d9c9; border-radius: 7px; background: #fffaf6; padding: 13px 15px; }
+.install-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.install-head b { font-size: 13px; color: #a4562f; }
+.install-head small { color: #9a8878; font-size: 11px; }
+#installDetail { margin: 8px 0 0; color: #7d7a74; font-size: 12px; line-height: 1.6; }
+.install-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 11px; }
+.install-check { display: inline-flex; align-items: center; gap: 5px; color: #7d7a74; font-size: 11px; cursor: pointer; }
+.install-log {
+  margin: 11px 0 0; max-height: 190px; overflow: auto; padding: 9px 11px; border-radius: 5px;
+  background: #2b3138; color: #cfe3dd; font: 11px/1.55 Consolas, "Courier New", monospace; white-space: pre-wrap;
+}

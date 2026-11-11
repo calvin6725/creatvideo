@@ -92,6 +92,33 @@ def install_torch(python: Path, force_cpu: bool) -> bool:
     return has_cuda()
 
 
+INSTALL_HINT = """\
+请先安装 AI 克隆引擎（只做一次）：
+
+  1) 双击项目里的“安装AI克隆引擎.bat”
+  2) 或在命令行执行：{python} tools/setup_ai.py
+
+  国内网络建议加 --mirror（用 hf-mirror.com 下模型）
+  没有 NVIDIA 显卡可加 --cpu（CPU 推理很慢，但能跑）
+"""
+
+
+def install_all(python: Path | None = None, mirror: bool = False, cpu: bool = False) -> int:
+    """给服务端调用的一键安装（返回 0 表示成功）。"""
+    if python is None:
+        python = ensure_venv()
+    install_base(Path(python))
+    has_cuda = install_torch(Path(python), cpu)
+    install_ai_deps(Path(python))
+    try:
+        ensure_zipvoice_repo()
+    except SystemExit as exc:  # git 不可用等
+        print(exc)
+    download_models(mirror)
+    write_config("cuda" if has_cuda else "cpu")
+    return 0
+
+
 def install_ai_deps(python: Path) -> None:
     log("安装 ZipVoice 推理依赖")
     run([str(python), "-m", "pip", "install", "-r", str(ROOT / "requirements-ai.txt")], check=False)
@@ -138,6 +165,11 @@ def download_models(use_mirror: bool) -> None:
         path = hf_hub_download(VOCOS_REPO, filename=name)
         shutil.copy2(path, vocos / local)
         print(f"  ✓ vocos/{local}")
+
+
+def model_ready() -> bool:
+    target = MODELS / MODEL_NAME
+    return all((target / name).is_file() for name in ("model.pt", "model.json", "tokens.txt"))
 
 
 def verify(python: Path) -> None:
