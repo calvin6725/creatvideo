@@ -20,7 +20,19 @@ import numpy as np
 from . import dsp
 from .audio_io import db_to_gain, normalize, peak, rms, to_mono
 
-__all__ = ["analyze_clone", "prepare_clone_profile", "finish_audio", "LegacySettings"]
+__all__ = ["analyze_clone", "prepare_clone_profile", "finish_audio", "LegacySettings", "speed_factor"]
+
+SPEED_MIN = 0.5
+SPEED_MAX = 2.0
+
+
+def speed_factor(percent: float) -> float:
+    """语速百分比 → 倍率（+25% 就是 1.25 倍），并夹到安全区间。"""
+    try:
+        value = float(percent)
+    except (TypeError, ValueError):
+        return 1.0
+    return float(min(SPEED_MAX, max(SPEED_MIN, 1.0 + value / 100.0)))
 
 
 @dataclass
@@ -129,6 +141,11 @@ def finish_audio(
         return data, rate
     data = normalize(data, target_db=-6.0)
 
+    # 0) 语速（变速不变调）：放在最前面，后面的 EQ / 压缩都在最终时长上做
+    factor = speed_factor(cfg.speed)
+    if abs(factor - 1.0) > 0.005:
+        data = dsp.time_stretch(data, rate, factor)
+
     # 1) 音高微调（PSOLA，时长不变）
     if abs(cfg.pitch) > 0.05:
         data = dsp.psola(data, rate, 2 ** (cfg.pitch / 12.0))
@@ -182,7 +199,10 @@ def finish_audio(
         data = dsp.add_breath(data, rate, 0.03)
 
     # 4) 齿音抑制 + 动态 + 气声 + 空间
-    data = dsp.de_ess(data, rate, strength=float(np.clip(cfg.deess / 100.0, 0.0, 1.0)) * 0.55)
+    deess_scale = 0.55
+    if factor > 1.15:  # 念得快时齿音本来就更短，压狠了会发闷
+        deess_scale *= max(0.55, 1.0 - (factor - 1.15) * 0.9)
+    data = dsp.de_ess(data, rate, strength=float(np.clip(cfg.deess / 100.0, 0.0, 1.0)) * deess_scale)
     if gentle:
         # 轻压缩：保留说话人的自然起伏，只把忽大忽小收一收
         data = dsp.compress(data, rate, threshold_db=-24.0, ratio=1.6, makeup=1.1)

@@ -119,6 +119,7 @@ set CREATVIDEO_PORT=8100 && .venv\Scripts\python.exe voice_server.py
 | `prompt_min/max_seconds` | 参考片段长度范围 | `2 / 8` |
 | `asr_model` | faster-whisper 模型大小 | `small` |
 | `num_step` | 扩散步数（0 = 按模型自动：蒸馏 8 步） | `0` |
+| — | 语速在页面滑块上调（-30% ~ +50%，显示实际倍率，如 +25% = 1.25×） | `0` |
 
 ---
 

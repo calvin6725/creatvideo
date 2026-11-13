@@ -285,7 +285,7 @@ function ttsSettings() {
     ...base,
     ...adjust,
     pitch: Number(base.pitch || 0) + Number($('ttsPitch').value || 0),
-    speed: Number(base.speed || 0) + Number($('ttsSpeed').value || 0),
+    speed: Math.min(50, Math.max(-30, Number(base.speed || 0) + Number($('ttsSpeed').value || 0))),
     style
   };
 }
@@ -351,7 +351,22 @@ $('ttsText').addEventListener('keydown', event => {
 });
 
 $('ttsPitch').addEventListener('input', () => { $('ttsPitchValue').textContent = `${$('ttsPitch').value > 0 ? '+' : ''}${$('ttsPitch').value} st`; });
-$('ttsSpeed').addEventListener('input', () => { $('ttsSpeedValue').textContent = `${$('ttsSpeed').value > 0 ? '+' : ''}${$('ttsSpeed').value}%`; });
+const speedText = value => {
+  const percent = Number(value || 0);
+  const factor = Number(Math.min(2, Math.max(0.5, 1 + percent / 100)).toFixed(2)).toString();
+  return `${percent > 0 ? '+' : ''}${percent}% · ${factor}×`;
+};
+$('ttsSpeed').addEventListener('input', () => {
+  $('ttsSpeedValue').textContent = speedText($('ttsSpeed').value);
+  try { localStorage.setItem('videoTtsSpeed', String($('ttsSpeed').value)); } catch { /* 忽略 */ }
+});
+try {
+  const saved = Number(localStorage.getItem('videoTtsSpeed'));
+  if (Number.isFinite(saved) && saved !== 0) {
+    $('ttsSpeed').value = String(Math.min(50, Math.max(-30, saved)));
+    $('ttsSpeedValue').textContent = speedText($('ttsSpeed').value);
+  }
+} catch { /* 忽略 */ }
 $('ttsClone').addEventListener('change', updateTtsButton);
 
 async function waitForJob(jobId) {

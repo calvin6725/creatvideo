@@ -188,6 +188,16 @@ def synthesize(text: str, clone_id: Optional[str], settings: dict, engine: Optio
         raise HttpError(400, "朗读文字不能为空")
     if len(text) > CONFIG.max_text_chars:
         raise HttpError(400, f"文字太长（上限 {CONFIG.max_text_chars} 字），请分批生成")
+    # 语速统一在这里夹一次，旧页面或脚本传越界值也不会把时长搞崩
+    from .processor import SPEED_MAX, SPEED_MIN
+
+    try:
+        speed_percent = float(settings.get("speed") or 0.0)
+    except (TypeError, ValueError):
+        speed_percent = 0.0
+    settings = {**settings, "speed": float(
+        min((SPEED_MAX - 1) * 100, max((SPEED_MIN - 1) * 100, speed_percent))
+    )}
     clone = None
     if clone_id:
         clone = STORE.get(clone_id, load_audio=True)
