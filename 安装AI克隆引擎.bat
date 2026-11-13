@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
@@ -39,11 +39,21 @@ echo.
 python tools\setup_ai.py %*
 if errorlevel 1 (
   echo.
-  echo [失败] 安装没有完成。常见原因：
-  echo   - 网络无法访问 download.pytorch.org：可加参数 --cpu 先装 CPU 版
-  echo   - 网络无法访问 huggingface.co：可加参数 --mirror 用镜像下载模型
-  echo   例如：python tools\setup_ai.py --mirror
-  echo   - 只是模型没下完：python tools\setup_ai.py --skip-torch --mirror
+  echo [失败] 安装没有完成。常见原因与办法：
+  echo.
+  echo [1] PyTorch 下载失败 - 连不上官方源
+  echo    先执行下面这行命令，从阿里云镜像装：
+  echo      .venv\Scripts\python.exe -m pip install torch torchaudio -f https://mirrors.aliyun.com/pytorch-wheels/cu121
+  echo    装好后继续：
+  echo      .venv\Scripts\python.exe tools\setup_ai.py --skip-torch --mirror
+  echo.
+  echo [2] 模型下载失败 - 连不上 huggingface
+  echo      .venv\Scripts\python.exe tools\setup_ai.py --skip-torch --mirror
+  echo.
+  echo [3] 没有 NVIDIA 显卡，或想先用 CPU
+  echo      .venv\Scripts\python.exe tools\setup_ai.py --cpu --mirror
+  echo.
+  echo 安装日志已保存到 install-log.txt（如果存在）
   pause
   exit /b 1
 )

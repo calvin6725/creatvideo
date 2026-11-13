@@ -117,6 +117,7 @@ def install_all(python: Path | None = None, mirror: bool = False, cpu: bool = Fa
     install_ai_deps(Path(python), mirror)
     try:
         ensure_zipvoice_repo()
+        patch_zipvoice()
     except SystemExit as exc:  # git 不可用等
         print(exc)
     download_models(mirror)
@@ -320,6 +321,62 @@ def model_ready() -> bool:
     return (target / "model.pt").stat().st_size > 100 * 1024 * 1024
 
 
+def _zipvoice_patched() -> bool:
+    """检查 third_party/ZipVoice 是否已经打过 fp16 dtype 补丁。"""
+    file = THIRD_PARTY / "ZipVoice" / "zipvoice" / "models" / "modules" / "scaling.py"
+    if not file.is_file():
+        return False
+    return "creatvideo fp16 dtype fix" in file.read_text(encoding="utf-8", errors="ignore")
+
+
+def patch_zipvoice() -> None:
+    """给 ZipVoice 的 SwooshL/R 补 fp16 dtype（否则显存不足降级 fp16 会直接崩）。
+
+    ZipVoice 把 fp16 输入转成 fp32 计算后忘了转回来，后面 linear 就会报
+    「Float 与 Half 混用」。这里把三处函数的返回值 dtype 还原，逻辑等价。
+    """
+    file = THIRD_PARTY / "ZipVoice" / "zipvoice" / "models" / "modules" / "scaling.py"
+    if not file.is_file():
+        print("! 没找到 ZipVoice 代码，跳过 fp16 补丁")
+        return
+    text = file.read_text(encoding="utf-8")
+    if "creatvideo fp16 dtype fix" in text:
+        print("✓ fp16 补丁已存在")
+        return
+    original = text
+    # SwooshLFunction / SwooshRFunction：返回前还原 dtype
+    text = text.replace(
+        "                if x.dtype == torch.float16 or torch.is_autocast_enabled():\n"
+        "                    y = y.to(torch.float16)\n"
+        "                return y",
+        "                return y.to(torch.float16)  # creatvideo fp16 dtype fix",
+    )
+    text = text.replace(
+        "if not requires_grad:\n                    return y\n",
+        "if not requires_grad:\n                    return y.to(x.dtype)  # creatvideo fp16 dtype fix\n",
+    )
+    # SwooshLForward / SwooshRForward：函数式版本同样漏转
+    for shift, const in (("4.0", "0.035"), ("1.0", "0.313261687")):
+        old = (
+            f"        x_offset = x - {shift}\n"
+            "        log_sum = (1.0 + x_offset.exp()).log().to(x.dtype)\n"
+            "        log_sum = torch.where(log_sum == float(\"inf\"), x_offset, log_sum)\n"
+            f"        return log_sum - 0.08 * x - {const}"
+        )
+        new = (
+            f"        x_offset = x - {shift}\n"
+            "        log_sum = (1.0 + x_offset.exp()).log().to(x.dtype)\n"
+            "        log_sum = torch.where(log_sum == float(\"inf\"), x_offset, log_sum)\n"
+            f"        return (log_sum - 0.08 * x - {const}).to(x.dtype)  # creatvideo fp16 dtype fix"
+        )
+        text = text.replace(old, new)
+    if text == original:
+        print("! 补丁没有匹配到代码（ZipVoice 版本可能变了）；运行时会用运行时补丁兜底")
+        return
+    file.write_text(text, encoding="utf-8")
+    print("✓ 已给 ZipVoice 打上 fp16 dtype 补丁")
+
+
 def verify(python: Path) -> None:
     log("自检")
     code = r"""
@@ -341,6 +398,26 @@ for module in ("vocos", "lhotse", "jieba", "pypinyin", "piper_phonemize", "safet
         print("缺少", module, "->", exc)
 """
     run([str(python), "-c", code], check=False)
+
+
+def fix_bat_files() -> None:
+    """把项目里的 .bat 统一成「UTF-8 BOM + CRLF」。
+
+    中文 Windows 的 cmd 只认 CRLF；LF 行尾 + 长提示行会被截断执行，
+    出现 “'xx' is not recognized as an internal or external command” 这类噪音。
+    """
+    root = ROOT
+    changed = 0
+    for path in sorted(root.glob("*.bat")):
+        raw = path.read_bytes()
+        text = raw.decode("utf-8-sig", errors="replace")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        normalised = b"\xef\xbb\xbf" + text.replace("\n", "\r\n").encode("utf-8")
+        if normalised != raw:
+            path.write_bytes(normalised)
+            changed += 1
+    if changed:
+        print(f"✓ 已修正 {changed} 个 .bat 的行尾/BOM（避免中文提示被 cmd 截断）")
 
 
 def write_config(device: str) -> None:
@@ -381,9 +458,11 @@ def main() -> None:
         has_cuda = probe.returncode == 0 and probe.stdout.strip() == "True"
     install_ai_deps(python)
     ensure_zipvoice_repo()
+    patch_zipvoice()
     if not args.skip_model:
         download_models(args.mirror)
     write_config("cuda" if has_cuda else "cpu")
+    fix_bat_files()
     verify(python)
 
     print("\n" + "=" * 60)

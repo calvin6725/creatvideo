@@ -777,12 +777,23 @@ function applyStyle(name) {
   if (state.activeClone) setMessage('speechStatus', `风格已切换到「${name === 'natural' ? '自然克隆' : $('presetSelect').selectedOptions[0].textContent}」，重新生成即可听到效果`);
 }
 
+function speedFactor(percent) {
+  return Math.min(2, Math.max(0.5, 1 + Number(percent || 0) / 100));
+}
+
+function speedHint(percent) {
+  // 常用倍率直接写清楚，避免“25% 到底是不是 1.25 倍”的疑问
+  const factor = speedFactor(percent);
+  const text = Number(factor.toFixed(2)).toString();
+  return `${percent > 0 ? '+' : ''}${percent}% · ${text}×`;
+}
+
 function updateLabels() {
   const v = values();
   const signed = value => `${value > 0 ? '+' : ''}${value}`;
   $('pitchValue').textContent = `${signed(v.pitch)} st`;
   $('formantValue').textContent = signed(v.formant);
-  $('speedValue').textContent = `${signed(v.speed)}%`;
+  $('speedValue').textContent = speedHint(v.speed);
   $('brightnessValue').textContent = signed(v.brightness);
   $('warmthValue').textContent = signed(v.warmth);
   $('presenceValue').textContent = signed(v.presence);
@@ -849,6 +860,7 @@ function bind() {
   });
   $('cloneText').addEventListener('input', updateButtons);
   $('cloneName').addEventListener('input', updateButtons);
+  $('speed').addEventListener('input', () => store('voiceSpeed', Number($('speed').value)));
   CONTROL_IDS.forEach(id => {
     $(id).addEventListener('input', () => {
       $('presetSelect').value = 'custom';
@@ -885,6 +897,11 @@ function restoreSettings() {
     document.querySelectorAll('.style-list .preset').forEach(button => {
       button.classList.toggle('active', button.dataset.style === saved.style);
     });
+  }
+  // 语速单独记一份：换风格、清缓存之外都保留，避免每次都要重调
+  const savedSpeed = readStored('voiceSpeed', null);
+  if (Number.isFinite(Number(savedSpeed)) && savedSpeed !== null) {
+    $('speed').value = String(Math.min(50, Math.max(-30, Number(savedSpeed))));
   }
   const draft = readStored('voiceTextDraft', '');
   if (typeof draft === 'string') $('speechText').value = draft.slice(0, 12000);

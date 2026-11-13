@@ -115,10 +115,16 @@ def remove_silence(audio: np.ndarray, rate: int, threshold_db: float = -40.0, tr
     return audio[start:stop]
 
 
-def split_for_budget(sentence: str, prompt_seconds: float, limit: float) -> List[str]:
-    """按「参考 + 生成 ≤ 预算」把一句话再拆小（4GB 显存关键）。"""
+def split_for_budget(
+    sentence: str, prompt_seconds: float, limit: float, speed: float = 1.0
+) -> List[str]:
+    """按「参考 + 生成 ≤ 预算」把一句话再拆小（4GB 显存关键）。
+
+    speed 是生成语速倍率：念得越快，同样的预算能放下越多字。
+    """
     budget = max(2.0, limit - prompt_seconds)
-    max_chars = max(8, int(budget * 4.6))  # 中文约每秒 4.6 字（含停顿）
+    chars_per_second = 4.6 * max(0.5, min(2.0, float(speed or 1.0)))
+    max_chars = max(8, int(budget * chars_per_second))  # 中文约每秒 4.6 字（含停顿）
     if len(sentence) <= max_chars:
         return [sentence]
     pieces: List[str] = []
@@ -382,8 +388,14 @@ class ZipVoiceEngine:
         audio, original_rms = rms_norm(audio.astype(np.float32), TARGET_RMS)
         return audio, original_rms
 
-    def synthesize_chunk(self, prompt_audio: np.ndarray, prompt_text: str, text: str) -> np.ndarray:
-        """单句合成。模型没载入时直接失败（由上层 load 负责）。"""
+    def synthesize_chunk(
+        self, prompt_audio: np.ndarray, prompt_text: str, text: str, speed: float = 1.0
+    ) -> np.ndarray:
+        """单句合成。模型没载入时直接失败（由上层 load 负责）。
+
+        speed>1 时由模型直接按更快的节奏生成（时长预测按 token 比 / speed 计算），
+        比事后加速自然得多。
+        """
         import torch
 
         if self.model is None:
@@ -408,7 +420,7 @@ class ZipVoiceEngine:
                 prompt_tokens=prompt_tokens,
                 prompt_features=features,
                 prompt_features_lens=features_lens,
-                speed=1.0,
+                speed=float(max(0.5, min(2.0, speed))),
                 t_shift=0.5,
                 duration="predict",
                 num_step=self.num_step,
@@ -426,6 +438,7 @@ class ZipVoiceEngine:
         prompt_rate: int,
         prompt_text: str,
         progress: ProgressFn = None,
+        speed: float = 1.0,
     ) -> tuple[np.ndarray, int]:
         self.load(progress)
         prompt, prompt_rms = self.prepare_prompt(prompt_audio, prompt_rate)
@@ -436,9 +449,12 @@ class ZipVoiceEngine:
         if progress:
             progress(0.8, f"开始合成（{len(sentences)} 句）")
         limits = [float(self.cfg.max_duration)] + [float(v) for v in self.cfg.retry_max_durations]
+        speed = float(max(0.5, min(2.0, speed)))
         chunks: List[np.ndarray] = []
         for index, sentence in enumerate(sentences):
-            chunk = self._generate_with_retry(prompt, prompt_text, sentence, prompt_seconds, limits)
+            chunk = self._generate_with_retry(
+                prompt, prompt_text, sentence, prompt_seconds, limits, speed
+            )
             if prompt_rms and prompt_rms < TARGET_RMS:  # 参考音本身很小，保持同样的音量关系
                 chunk = chunk * (prompt_rms / TARGET_RMS)
             chunks.append(chunk)
@@ -449,14 +465,21 @@ class ZipVoiceEngine:
         # 需要把显卡让给别的软件时，点页面上的“释放显存”。
         return audio, SAMPLE_RATE
 
-    def _generate_with_retry(self, prompt, prompt_text, sentence, prompt_seconds, limits) -> np.ndarray:
+    def _generate_with_retry(
+        self, prompt, prompt_text, sentence, prompt_seconds, limits, speed: float = 1.0
+    ) -> np.ndarray:
         errors: List[str] = []
         budgets = list(limits) + [max(2.0, limits[-1] - 1.0)]
         for index, limit in enumerate(budgets):
             try:
-                pieces = split_for_budget(sentence, prompt_seconds, limit)
+                pieces = split_for_budget(sentence, prompt_seconds, limit, speed)
                 return cross_fade_concat(
-                    [self.synthesize_chunk(prompt, prompt_text, piece) for piece in pieces], SAMPLE_RATE, 0.05
+                    [
+                        self.synthesize_chunk(prompt, prompt_text, piece, speed)
+                        for piece in pieces
+                    ],
+                    SAMPLE_RATE,
+                    0.05,
                 )
             except Exception as exc:  # 显存不足 → 缩小分块 / 降精度重试
                 message = str(exc)
@@ -790,6 +813,9 @@ class EngineManager:
             audio, rate = finish_audio(audio, rate, profile, settings, use_formant_shift=False)
             return audio, rate, {"engine": "fallback", "detail": "Windows 本机朗读 + 后处理"}
 
+        from .processor import speed_factor
+
+        speed = speed_factor(settings.get("speed") or 0.0)
         ai = self.ai
         if not ai.probe().available:
             if self.fallback.probe().available:
@@ -802,12 +828,17 @@ class EngineManager:
         prompt_text = (clone.get("text") or "").strip()
         if prompt_audio is None or not prompt_text:
             raise EngineError("克隆音色缺少参考音频或参考文字，请重新导入音频建立音色")
-        audio, rate = ai.synthesize(text, prompt_audio, prompt_rate, prompt_text, progress)
+        # 语速交给生成器（模型按更快的节奏念），后处理里只处理剩下的零头
+        audio, rate = ai.synthesize(
+            text, prompt_audio, prompt_rate, prompt_text, progress, speed=speed
+        )
         profile = prepare_clone_profile(clone, audio, rate, settings)
         # 克隆模型已经学到了参考人的音色：不再叠加自动共振峰搬迁，
         # 只用用户显式拖动的滑块 + 轻量润色，避免「越修越像机器人」。
+        # 语速已经由生成器做过，这里不再重复变速（避免二次处理的糊音）。
+        post_settings = {**settings, "speed": 0}
         audio, rate = finish_audio(
-            audio, rate, profile, settings, use_formant_shift=False, gentle=True
+            audio, rate, profile, post_settings, use_formant_shift=False, gentle=True
         )
         return audio, rate, {
             "engine": "ai",

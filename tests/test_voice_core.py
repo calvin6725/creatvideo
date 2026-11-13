@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from voice import dsp, processor, segment  # noqa: E402
+from voice import dsp, engines, processor, segment  # noqa: E402
 from voice.audio_io import rms, wav_bytes, read_audio_bytes, to_mono, resample  # noqa: E402
 from voice.store import CloneStore  # noqa: E402
 
@@ -228,3 +228,50 @@ def test_missing_dependencies_are_reported(monkeypatch, tmp_path):
     assert not status.available
     assert "安装" in status.detail
     assert missing[0] in status.detail
+
+
+# --------------------------------------------------------------------------- #
+# 语速（变速不变调）
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("factor", [1.25, 1.5, 0.8])
+def test_time_stretch_changes_length_but_not_pitch(factor):
+    rate = 24000
+    signal = harmonic_tone(2.0, 160.0, rate)
+    out = dsp.time_stretch(signal, rate, factor)
+    assert abs(len(out) / rate - 2.0 / factor) < 0.05
+    _, f0 = dsp.f0_track(out, rate)
+    voiced = f0[f0 > 0]
+    assert voiced.size > 0
+    median = float(np.median(voiced))
+    # 音高必须保持（不能变成花栗鼠）
+    assert abs(median - 160.0) < 12.0
+    assert np.isfinite(out).all()
+
+
+def test_speed_factor_maps_percentages():
+    assert processor.speed_factor(0) == pytest.approx(1.0)
+    assert processor.speed_factor(25) == pytest.approx(1.25)
+    assert processor.speed_factor(-20) == pytest.approx(0.8)
+    assert processor.speed_factor(1000) == pytest.approx(2.0)
+    assert processor.speed_factor(-1000) == pytest.approx(0.5)
+
+
+def test_finish_audio_applies_speed():
+    rate = 24000
+    signal = harmonic_tone(2.0, 150.0, rate)
+    features = processor.analyze_clone(signal, rate)
+    profile = processor.prepare_clone_profile({"features": features}, signal, rate, {})
+    fast, _ = processor.finish_audio(signal, rate, profile, {"speed": 25}, use_formant_shift=False)
+    slow, _ = processor.finish_audio(signal, rate, profile, {"speed": -20}, use_formant_shift=False)
+    assert len(fast) < len(signal) * 0.9
+    assert len(slow) > len(signal) * 1.1
+    _, f0 = dsp.f0_track(fast, rate)
+    voiced = f0[f0 > 0]
+    assert abs(float(np.median(voiced)) - 150.0) < 15.0
+
+
+def test_split_for_budget_scales_with_speed():
+    sentence = "这是一句用来测试分块预算的中文长句，大约有三十多个字，看看会不会被拆开。"
+    slow = engines.split_for_budget(sentence, 3.0, 12.0, speed=1.0)
+    fast = engines.split_for_budget(sentence, 3.0, 12.0, speed=1.5)
+    assert len(fast) <= len(slow)

@@ -20,6 +20,7 @@ __all__ = [
     "f0_track",
     "harmonic_intervals",
     "psola",
+    "time_stretch",
     "resample_linear",
     "resample_formants",
     "spectral_profile",
@@ -283,6 +284,58 @@ def psola(samples: np.ndarray, rate: int, ratio: float = 1.0) -> np.ndarray:
         valid[: min(tail, data.size)], out[: min(tail, data.size)], data[: min(tail, data.size)]
     )
     return out[: data.size].astype(np.float32)
+
+
+def _stretch_wsola(data: np.ndarray, rate: int, factor: float) -> np.ndarray:
+    """WSOLA：波形相似度搜索的重叠相加，变速不变调、不变共振峰。"""
+    size = max(256, int(rate * 0.04) // 2 * 2)
+    hop = size // 2
+    tol = max(16, int(rate * 0.01))
+    if data.size < size * 2:
+        return data.astype(np.float32, copy=True)
+    window = np.hanning(size + 2)[1:-1].astype(np.float32)
+    target = max(1, int(round(data.size / factor)))
+    count = max(1, int(np.ceil(target / hop)) + 2)
+    out = np.zeros(count * hop + size, dtype=np.float32)
+    weight = np.zeros(out.shape[0], dtype=np.float32)
+    ref = None
+    last = max(0, data.size - size)
+    for index in range(count):
+        nominal = int(round(index * hop * factor))
+        pos = min(max(0, nominal), last)
+        if ref is not None:
+            low = max(0, nominal - tol)
+            high = min(last, nominal + tol)
+            if high > low:
+                region = data[low : high + hop]
+                candidates = np.lib.stride_tricks.sliding_window_view(region, hop)
+                corr = candidates[:, ::2] @ ref
+                if corr.size:
+                    pos = low + int(np.argmax(corr))
+        start = index * hop
+        frame = data[pos : pos + size]
+        if frame.size < size:
+            break
+        out[start : start + size] += frame * window
+        weight[start : start + size] += window
+        ref = data[pos : pos + hop][::2]
+    valid = weight > 1e-3
+    out[valid] /= weight[valid]
+    return out[:target].astype(np.float32)
+
+
+def time_stretch(samples: np.ndarray, rate: int, factor: float) -> np.ndarray:
+    """变速不变调：factor>1 语速变快，<1 变慢，音高与共振峰保持不变。
+
+    用 WSOLA（波形相似度搜索 + 重叠相加）：每次把一帧放到目标位置前，先在
+    目标位置附近 ±10ms 内找和目标最相似的那一帧再叠加，所以相位能接上，
+    不会出现纯 OLA 的「水声」和直接重采样的「花栗鼠」。
+    """
+    data = np.asarray(samples, dtype=np.float32)
+    if abs(factor - 1.0) < 1e-3 or data.size < 256 or factor <= 0:
+        return data.astype(np.float32, copy=True)
+    factor = float(np.clip(factor, 0.5, 2.0))
+    return _stretch_wsola(data, rate, factor)
 
 
 def resample_linear(samples: np.ndarray, ratio: float) -> np.ndarray:
