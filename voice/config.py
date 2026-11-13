@@ -56,7 +56,7 @@ class Config:
     # 生成时的采样数上限与随机种子（0 = 每次随机）
     seed: int = 0
     # 服务
-    port: int = 8000
+    port: int = 9100
     host: str = "127.0.0.1"
     # 允许的朗读文本长度
     max_text_chars: int = 12000

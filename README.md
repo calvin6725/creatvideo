@@ -35,7 +35,7 @@ python tools\setup_ai.py --skip-model # 只装依赖，不重新下模型
 
 ### 2. 打开页面
 
-双击 **`启动声线实验室.bat`** → 浏览器打开 `http://localhost:8000/`。
+双击 **`启动声线实验室.bat`** → 浏览器打开 `http://localhost:9100/`。
 
 ### 3. 建立克隆音色
 
@@ -71,7 +71,7 @@ python tools\setup_ai.py --skip-model # 只装依赖，不重新下模型
 ```
 index.html / app.js            声线实验室界面（导入 → 选段 → 建音色 → 朗读）
 video.html / video.js          视频解说剪辑（用克隆音色生成解说并导出）
-voice_server.py                启动入口：python voice_server.py --port 8000
+voice_server.py                启动入口：python voice_server.py --port 9100
 voice/                         本机服务与处理引擎
   service.py                   HTTP 接口 + 静态文件
   engines.py                   ZipVoice AI 克隆引擎 / SAPI 备选引擎
@@ -98,7 +98,7 @@ tests/                         pytest 自测（不需要 GPU）
 
 ```powershell
 # 启动服务（前台，方便看日志）
-.venv\Scripts\python.exe voice_server.py --port 8000
+.venv\Scripts\python.exe voice_server.py --port 9100
 
 # 只是自测（不需要显卡/模型）
 .venv\Scripts\python.exe -m pytest tests\test_voice_core.py -q
@@ -132,6 +132,6 @@ set CREATVIDEO_PORT=8100 && .venv\Scripts\python.exe voice_server.py
 | 想立刻把显卡让给别的软件 | 页面点 🔌「释放显存」，或 `POST /api/release` |
 | 声音不像 | 换一个更干净的 3–6 秒片段；**核对参考文字和音频是否一致**；参考音频别带背景音乐 |
 | 自动识别不可用 | `pip install faster-whisper`，或直接手动填参考文字 |
-| 打不开 localhost:8000 | 用 `启动声线实验室.bat` 启动；或看命令行窗口的报错 |
+| 打不开 localhost:9100 | 用 `启动声线实验室.bat` 启动；或看命令行窗口的报错 |
 
 参考音频的版权与授权请自行确认：只用本人声音，或已获得明确授权的声音。

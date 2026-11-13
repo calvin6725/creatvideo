@@ -10,6 +10,9 @@ models/
 third_party/
 voice/config.json
 
+# 启动日志（logs/server.log）
+logs/
+
 # 测试产物
 .test-output/*.wav
 .test-output/*.wav.tmp

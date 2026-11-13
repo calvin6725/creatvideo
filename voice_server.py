@@ -2,8 +2,8 @@
 """声线实验室 · 本机声音克隆服务。
 
 用法：
-    python voice_server.py                       # 默认 http://localhost:8000/
-    python voice_server.py --port 8000           # 指定端口
+    python voice_server.py                       # 默认 http://localhost:9100/
+    python voice_server.py --port 9100           # 指定端口
     python voice_server.py --host 0.0.0.0        # 允许局域网访问（默认只监听本机）
     python voice_server.py --engine ai           # 强制使用 AI 克隆引擎
 

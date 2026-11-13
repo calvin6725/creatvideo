@@ -4,7 +4,7 @@
  *
  * 需要服务已经在运行（python voice_server.py）以及 playwright：
  *   npm i -D playwright && npx playwright install chromium
- *   node tools/ui_smoke_test.cjs            # 默认 http://localhost:8000
+ *   node tools/ui_smoke_test.cjs            # 默认 http://localhost:9100
  *   VOICE_LAB_URL=http://localhost:8100 node tools/ui_smoke_test.cjs
  */
 const assert = require('node:assert/strict');
@@ -12,7 +12,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
-const baseUrl = process.env.VOICE_LAB_URL || 'http://localhost:8000';
+const baseUrl = process.env.VOICE_LAB_URL || 'http://localhost:9100';
 const output = path.resolve(__dirname, '..', '.test-output');
 const sample = process.env.SAMPLE_AUDIO || path.resolve(__dirname, '..', '标记音.mp4');
 const browserPath = process.env.BROWSER_PATH || undefined;

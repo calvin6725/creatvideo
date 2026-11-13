@@ -6,7 +6,7 @@
 - 导入音频 → 自动切出最佳参考片段 → 自动转写 → 建音色
 - 克隆朗读：/api/tts（同步）与 /api/tts/jobs（长文本异步）
 
-启动：python voice_server.py --port 8000
+启动：python voice_server.py --port 9100
 """
 
 from __future__ import annotations
@@ -547,7 +547,7 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
+def serve(host: str = "127.0.0.1", port: int = 9100) -> None:
     server = Server((host, port), Handler)
     print(f"声线实验室已启动：http://localhost:{port}/")
     print(f"  引擎：{ENGINE.status()['detail']}")

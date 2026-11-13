@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const baseUrl = process.env.VOICE_LAB_URL || 'http://localhost:8000';
+const baseUrl = process.env.VOICE_LAB_URL || 'http://localhost:9100';
 const sample = process.env.SAMPLE_AUDIO || path.resolve(__dirname, '..', '标记音.mp4');
 
 function inspectWav(bytes) {

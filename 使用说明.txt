@@ -5,7 +5,7 @@
    - 网络下不动模型就再运行：python tools\setup_ai.py --mirror
    - 没有 NVIDIA 显卡也可以装：python tools\setup_ai.py --cpu（会慢很多）
    也可以在页面里点“一键安装到本机”，后台安装并在页面上看日志。
-2. 双击“启动声线实验室.bat”，浏览器会自动打开 http://localhost:8000/
+2. 双击“启动声线实验室.bat”，浏览器会自动打开 http://localhost:9100/
 3. 右上角显示“AI 克隆”就说明引擎就绪；第一次合成会自动把模型读进显卡，约 20–40 秒。
 
 二、克隆一个音色
